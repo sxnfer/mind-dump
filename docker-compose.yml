@@ -1,0 +1,55 @@
+# One command runs the whole backend (D18):   docker compose up
+# Order: db (healthy) → migrate (runs, exits 0) → api.
+# Settings come from .env next to this file (copy .env.example; never commit .env).
+name: mind-dump
+
+x-database-url: &database-url
+  DATABASE_URL: postgresql://mind_dump:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}@db:5432/mind_dump
+
+services:
+  db:
+    image: pgvector/pgvector:pg18  # D3: Postgres 18 with the pgvector extension available
+    environment:
+      POSTGRES_USER: mind_dump
+      POSTGRES_DB: mind_dump
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}
+    volumes:
+      # Postgres 18 images keep data under /var/lib/postgresql/18/...; mount the parent.
+      - pgdata:/var/lib/postgresql
+    ports:
+      # Only on your Mac's loopback, so tests and psql can reach it; not your network.
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mind_dump -d mind_dump"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+  migrate:
+    build: ./backend
+    image: mind-dump-api:local
+    command: ["python", "-m", "mind_dump.migrate"]
+    environment:
+      <<: *database-url
+    healthcheck:
+      disable: true  # a one-shot job, not a server
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: ./backend
+    image: mind-dump-api:local
+    environment:
+      <<: *database-url
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  pgdata:  # survives `docker compose down`; only `down -v` deletes it

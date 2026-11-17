@@ -1,8 +1,34 @@
 """The FastAPI app. Uvicorn imports `app` from here (see the Dockerfile CMD)."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
-app = FastAPI(title="Mind Dump API", version="0.1.0")
+from mind_dump import items
+from mind_dump.config import load_settings
+from mind_dump.db import create_pool
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Open the pool at startup, close it at shutdown.
+
+    `wait=True` fails startup if Postgres is unreachable, so a broken setup shows up
+    at once (and Compose restarts the API) instead of on the first request.
+    """
+    settings = load_settings()
+    pool = create_pool(settings)
+    pool.open(wait=True, timeout=10)
+    app.state.pool = pool
+    try:
+        yield
+    finally:
+        pool.close()
+
+
+app = FastAPI(title="Mind Dump API", version="0.2.0", lifespan=lifespan)
+app.include_router(items.router)
 
 
 @app.get("/health", tags=["ops"])

@@ -33,8 +33,8 @@ The owner, San, is a data engineer who builds this to learn backend and DevOps p
 
 ## Current status
 
-- Milestone: **M0** (in progress, branch `m0-skeleton`).
-- Done: decisions D1, D2, D13, D14, D17, D24, D25, D26; FastAPI `/health` with pytest tests; Dockerfile; notch panel app; CI workflow. M0 explainer: https://claude.ai/artifact/8iomnCxEsupJeNbxKUATko
-- Repo is public. Secret scanning, push protection and the ruleset "main: require CI" are on.
-- Next step: San checks the panel over a fullscreen app and on every Space, then merges PR #1. Then M1 (needs D3, D4, D18).
+- M0: done on branch `m0-skeleton` (PR #1); San checks the panel over a fullscreen app, then merges.
+- Milestone: **M1** (in progress, branch `m1-notes-and-links`, stacked on M0). Decisions D3, D4, D18, D27 approved. M1 explainer: https://claude.ai/artifact/DoHcxumH7LcRFnkFYUs4BE
+- Done in M1: Postgres via Compose, migration runner, items API with tests, + button in the panel.
+- Next step: San tests the + flow in the app; then the M1 PR; then a schema diagram in `docs/` (M1 proof).
 - Update this section when a milestone starts or ends.

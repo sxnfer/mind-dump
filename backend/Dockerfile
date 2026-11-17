@@ -42,10 +42,13 @@ RUN groupadd --system --gid 10001 app \
  && useradd --system --uid 10001 --gid app --no-create-home app
 
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
+# SQL migrations (D4). Read-only for the app user: root owns them.
+COPY migrations /app/migrations
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    MIGRATIONS_DIR=/app/migrations
 
 USER app
 EXPOSE 8000
