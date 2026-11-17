@@ -20,7 +20,7 @@ build-backend = "uv_build"
 # Dev-only dependencies: used on your Mac and in CI, never in the image.
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",   # D25: needed by FastAPI's TestClient
+    "httpx2>=2.16.2",  # D25: needed by FastAPI's TestClient (successor to httpx)
     "pytest>=9.2.0",   # D25: test runner
     "ruff>=0.17.5",    # D26: lint and format
 ]

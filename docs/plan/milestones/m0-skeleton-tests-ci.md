@@ -42,9 +42,9 @@ Step by step on your Mac:
     Merge only when both CI jobs are green.
 
 **Done when:**
-- [ ] CI is green on the PR, both jobs.
+- [x] CI is green on the PR, both jobs.
 - [ ] The black panel shows at the notch, over a fullscreen app, on every Space.
-- [ ] The dot is green with the container running and turns red within 5 s when you stop it.
+- [ ] The dot is green with the container running. It turns red within 5 s when you stop the container, and within 7 s when the backend hangs (check interval 5 s + timeout 2 s).
 - [x] Eight decision records are in `docs/decisions/` (D1, D2, D13, D14, D17, D24, D25, D26).
 
 **Proof:** CI badge in the README, a short screen recording of the panel over a fullscreen app.

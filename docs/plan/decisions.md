@@ -15,11 +15,11 @@ Read each row in this order: what breaks without a solution, then the options, t
 | D10 | Frontend stack | Replaced by D19. islandcn is the design reference only | React cannot run inside a native Swift app. |
 | D1 | Backend language | Python (3.12 in the container) | San knows it; strongest data and AI libraries. See `docs/decisions/D01-backend-language.md`. |
 | D13 | Packaging | Docker | Same image on any Mac, in CI and in Azure. See `docs/decisions/D13-packaging.md`. |
-| D14 | CI/CD | GitHub Actions | Code is on GitHub; free Linux and macOS runners. See `docs/decisions/D14-ci.md`. |
+| D14 | CI/CD | GitHub Actions | Code is on GitHub; free Linux and macOS runners. Uses actions from GitHub, the uv team and Docker. See `docs/decisions/D14-ci.md`. |
 | D17 | Licence | MIT | Short and well known. See `docs/decisions/D17-licence.md`. |
 | D2 | Web framework | FastAPI on Uvicorn | Input checks from type hints, generated docs, async. See `docs/decisions/D02-web-framework.md`. |
 | D24 | Python and dependency manager | uv with `uv.lock` | Same Python and exact library versions everywhere. See `docs/decisions/D24-python-env.md`. |
-| D25 | Test runner | pytest (+ httpx for TestClient) | Plain asserts, clear failures, fixtures. Dev only. See `docs/decisions/D25-test-runner.md`. |
+| D25 | Test runner | pytest (+ httpx2 for TestClient) | Plain asserts, clear failures, fixtures. Dev only. See `docs/decisions/D25-test-runner.md`. |
 | D26 | Lint and format | ruff | One tool for lint and format, enforced in CI. Dev only. See `docs/decisions/D26-lint-format.md`. |
 
 ## Open
