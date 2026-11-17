@@ -32,7 +32,11 @@ Step by step on your Mac:
 8. **The CI workflow** (`.github/workflows/ci.yml`):
    - `backend` on Ubuntu: `uv sync --frozen`, ruff check and format, pytest, Docker build (layer cache), then a smoke test that runs the container and curls `/health`.
    - `app` on macOS: unsigned `xcodebuild` (D22).
-9. **Turn on secret protection and branch protection.** In the repo on GitHub: Settings > Code security > turn on secret scanning and push protection. Settings > Branches > add a rule for `main` that requires the `backend` and `app` checks to pass.
+9. **Turn on secret protection and branch protection.** These need a public repo on a free GitHub account, so the repo went public on 2026-11-17.
+   - Settings > Advanced Security > Secret Protection: Enable, then turn on Push protection.
+   - Settings > Rulesets > New branch ruleset "main: require CI": Active, target the default branch, no bypass. Rules: restrict deletions, block force pushes, require status checks `backend (lint, test, image, smoke)` and `app (xcodebuild)` from GitHub Actions.
+   - Check with `gh api repos/sxnfer/mind-dump/rules/branches/main`.
+   - If you rename a CI job, update the ruleset too, or merges will wait forever for a check that never reports.
 10. **Push and open a PR.**
     ```bash
     git add .

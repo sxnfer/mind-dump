@@ -35,5 +35,6 @@ The owner, San, is a data engineer who builds this to learn backend and DevOps p
 
 - Milestone: **M0** (in progress, branch `m0-skeleton`).
 - Done: decisions D1, D2, D13, D14, D17, D24, D25, D26; FastAPI `/health` with pytest tests; Dockerfile; notch panel app; CI workflow. M0 explainer: https://claude.ai/artifact/8iomnCxEsupJeNbxKUATko
-- Next step: San pushes `m0-skeleton`, opens the PR, turns on branch protection and secret scanning, and checks the manual done-when items in `docs/plan/milestones/m0-skeleton-tests-ci.md`.
+- Repo is public. Secret scanning, push protection and the ruleset "main: require CI" are on.
+- Next step: San checks the panel over a fullscreen app and on every Space, then merges PR #1. Then M1 (needs D3, D4, D18).
 - Update this section when a milestone starts or ends.
