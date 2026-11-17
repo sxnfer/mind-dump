@@ -1,0 +1,95 @@
+# CI (D14): every push to main and every pull request runs two jobs on fresh
+# machines. Branch protection on main requires both to pass before a merge.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: the jobs only read the repo.
+permissions:
+  contents: read
+
+# A new push to the same branch cancels the older, now-pointless run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (lint, test, image, smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+
+      # Same uv version as on your Mac (D24). Its cache is keyed on uv.lock.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.7"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      # --frozen: fail if uv.lock is out of date instead of quietly changing it.
+      - name: Install exact locked dependencies
+        run: uv sync --frozen
+
+      # Cheap checks first, so a typo fails in seconds.
+      - name: Lint (ruff check)
+        run: uv run ruff check --output-format=github .
+      - name: Format (ruff format --check)
+        run: uv run ruff format --check .
+
+      - name: Unit tests (pytest)
+        run: uv run pytest
+
+      # Buildx + the GitHub Actions cache keep Docker layers between runs.
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          load: true            # keep the image on this runner for the smoke test
+          push: false           # publishing images comes in M7
+          tags: mind-dump-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The smoke test runs the real image on a real port, the way the app will.
+      - name: Smoke test /health on the running container
+        run: |
+          docker run -d --name api -p 8000:8000 mind-dump-api:ci
+          for i in $(seq 1 30); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' api)
+            [ "$status" = "healthy" ] && break
+            sleep 1
+          done
+          echo "container health: $status"
+          curl --fail --silent --show-error http://localhost:8000/health
+          [ "$status" = "healthy" ]
+      - name: Container logs (on failure)
+        if: failure()
+        run: docker logs api || true
+
+  app:
+    name: app (xcodebuild)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Show Xcode version
+        run: xcodebuild -version
+      # Unsigned build (D22): CI proves it compiles; nobody installs this copy.
+      - name: Build the Mac app
+        run: |
+          xcodebuild \
+            -project app/MindDump.xcodeproj \
+            -scheme MindDump \
+            -configuration Release \
+            -derivedDataPath app/build/dd \
+            CODE_SIGNING_ALLOWED=NO \
+            build

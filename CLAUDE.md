@@ -8,7 +8,7 @@ The owner, San, is a data engineer who builds this to learn backend and DevOps p
 
 1. **No new dependency without approval.** Before you add any library, framework, tool or service, check `docs/plan/decisions.md`. If it is not Approved there, stop. Explain the problem it solves, what happens without it, and the options. San decides.
 2. **Every approval gets a record.** When San approves a decision, write `docs/decisions/DNN-short-name.md` from `docs/decisions/TEMPLATE.md`, and update its row in `docs/plan/decisions.md`.
-3. **Plain version first.** Where it is cheap, build the version without the tool first, so the tool solves a pain San has felt.
+3. **Explain the plain version; build the real one.** Do not build throwaway versions. Show the problem a tool solves (what breaks without it, how the tool works) with a visual Artifact explainer, then build the version we keep. (Changed by San on 2026-11-17; it replaces "plain version first".)
 4. **Never commit secrets.** Keys live in `.env`, which git ignores. `.env.example` holds names only.
 5. **Small branches, green CI.** One branch per milestone or smaller. Merge only when CI passes.
 
@@ -33,6 +33,7 @@ The owner, San, is a data engineer who builds this to learn backend and DevOps p
 
 ## Current status
 
-- Milestone: **M0** (not started).
-- Next step: San decides D1 (backend language), D13 (packaging), D14 (CI) and D17 (licence). Then write the four decision records and follow `docs/plan/milestones/m0-skeleton-tests-ci.md`.
+- Milestone: **M0** (in progress, branch `m0-skeleton`).
+- Done: decisions D1, D2, D13, D14, D17, D24, D25, D26; FastAPI `/health` with pytest tests; Dockerfile; notch panel app; CI workflow. M0 explainer: https://claude.ai/artifact/8iomnCxEsupJeNbxKUATko
+- Next step: San pushes `m0-skeleton`, opens the PR, turns on branch protection and secret scanning, and checks the manual done-when items in `docs/plan/milestones/m0-skeleton-tests-ci.md`.
 - Update this section when a milestone starts or ends.
