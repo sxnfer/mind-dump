@@ -6,6 +6,7 @@ so no value can ever become part of the SQL text (ruff rule S608 enforces this).
 
 from typing import Annotated
 
+import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from psycopg import Connection
 from psycopg.rows import DictRow
@@ -22,17 +23,36 @@ def _not_found(item_id: int) -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Item {item_id} not found")
 
 
-@router.post("", status_code=status.HTTP_201_CREATED, response_model=Item)
+@router.post(
+    "",
+    status_code=status.HTTP_201_CREATED,
+    response_model=Item,
+    responses={409: {"description": "This link is already saved; Location points to it"}},
+)
 def create_item(new: NewItem, conn: Conn, response: Response) -> Item:
     url = str(new.url) if isinstance(new, NewLink) else None
     body = None if isinstance(new, NewLink) else new.body
-    row = conn.execute(
-        """
-        INSERT INTO items (type, title, url, body) VALUES (%s, %s, %s, %s)
-        RETURNING id, type, title, url, body, status, created_at
-        """,
-        (new.type, new.title, url, body),
-    ).fetchone()
+    try:
+        # A savepoint: if the INSERT fails, only it is undone, and the connection stays usable.
+        with conn.transaction():
+            row = conn.execute(
+                """
+                INSERT INTO items (type, title, url, body) VALUES (%s, %s, %s, %s)
+                RETURNING id, type, title, url, body, status, created_at
+                """,
+                (new.type, new.title, url, body),
+            ).fetchone()
+    except psycopg.errors.UniqueViolation:
+        # The database's unique index (migration 003) caught a duplicate link.
+        existing = conn.execute(
+            "SELECT id FROM items WHERE type = 'link' AND url = %s", (url,)
+        ).fetchone()
+        existing_id = existing["id"] if existing else None
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="This link is already saved",
+            headers={"Location": f"/items/{existing_id}"} if existing_id else None,
+        ) from None
     if row is None:  # cannot happen: INSERT ... RETURNING always returns the row
         raise RuntimeError("INSERT returned no row")
     item = Item(**row)

@@ -11,6 +11,7 @@ final class CaptureModel {
         case note               // typing a note
         case saving
         case saved
+        case alreadySaved       // not an error: the link is safe, just not twice
         case failed(String)
     }
 
@@ -80,11 +81,16 @@ final class CaptureModel {
             }
             phase = .saved
             noteText = ""
-            try? await Task.sleep(for: .seconds(1.2))
-            if phase == .saved { close() }
+        } catch APIClient.APIError.alreadySaved {
+            phase = .alreadySaved
         } catch {
             phase = .failed(error.localizedDescription)
+            return
         }
+        // Show the result briefly, then fold back into the notch.
+        let shown = phase
+        try? await Task.sleep(for: .seconds(1.2))
+        if phase == shown { close() }
     }
 }
 

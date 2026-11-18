@@ -2,7 +2,7 @@
 
 > The source of truth is `backend/migrations/`. Update this diagram in the same PR as any new migration.
 
-As of migration 002 (M1):
+As of migration 003 (M1):
 
 ```mermaid
 erDiagram
@@ -13,7 +13,7 @@ erDiagram
         bigint      id PK "identity"
         text        type "note | link"
         text        title "1-200 chars, optional"
-        text        url "required for links, max 2048"
+        text        url "required for links, max 2048, unique per link"
         text        body "required for notes, 1-20000 chars"
         text        status "default saved"
         timestamptz created_at "default now()"
@@ -41,6 +41,7 @@ erDiagram
 | A link has a `url`; a note has a `body` | The API checks this first; the database is the second layer. |
 | Length limits on `title`, `url`, `body` | They match the API's 422 limits, so both layers agree. |
 | Deleting an item deletes its `item_tags` rows | No dangling links to deleted items (`ON DELETE CASCADE`). |
+| A link's `url` is unique (`items_link_url_key`, partial: links only) | No duplicate links. The database decides, so two saves at the same instant can't both win; the API answers `409 Conflict` with `Location` of the existing item. Notes may repeat. |
 | `tags.name` is unique | One row per tag name; items share it. |
 
 ## Indexes
@@ -48,6 +49,7 @@ erDiagram
 | Index | Serves |
 | --- | --- |
 | `items` primary key | `GET /items/{id}` and newest-first paging (`ORDER BY id DESC`, `id < before`) |
+| `items_link_url_key` (unique, `WHERE type = 'link'`) | Duplicate-link rule; also fast "is this URL saved?" lookups |
 | `item_tags` primary key `(item_id, tag_id)` | Tags of one item |
 | `item_tags_tag_id_idx` | Items with one tag |
 

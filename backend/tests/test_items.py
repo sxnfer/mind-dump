@@ -1,5 +1,8 @@
 """POST/GET/DELETE /items: one test per happy path and per bad input (M1 done-when)."""
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -88,6 +91,61 @@ def test_rejected_input_saves_nothing(client: TestClient) -> None:
     client.post("/items", json={"type": "note", "body": ""})
 
     assert client.get("/items").json()["items"] == []
+
+
+# ---------- POST /items: duplicates → 409 ----------
+
+
+def test_same_link_twice_is_409_pointing_at_the_first(client: TestClient) -> None:
+    first = save(client, type="link", url="https://example.com/article")
+
+    response = client.post("/items", json={"type": "link", "url": "https://example.com/article"})
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "This link is already saved"}
+    assert response.headers["location"] == f"/items/{first['id']}"
+    assert len(client.get("/items").json()["items"]) == 1
+
+
+def test_link_differing_only_in_host_case_is_a_duplicate(client: TestClient) -> None:
+    save(client, type="link", url="https://example.com/article")
+
+    response = client.post("/items", json={"type": "link", "url": "https://EXAMPLE.com/article"})
+
+    assert response.status_code == 409
+
+
+def test_different_links_and_notes_with_the_same_text_are_fine(client: TestClient) -> None:
+    save(client, type="link", url="https://example.com/a")
+    save(client, type="link", url="https://example.com/b")
+    save(client, type="note", body="https://example.com/a")
+    save(client, type="note", body="https://example.com/a")  # notes may repeat
+
+
+def test_two_simultaneous_saves_of_one_link_only_one_wins(client: TestClient) -> None:
+    """The race a check-then-insert in Python would lose. The unique index makes it safe."""
+    start = threading.Barrier(8)
+
+    def post() -> int:
+        start.wait()  # release all threads at the same instant
+        return client.post(
+            "/items", json={"type": "link", "url": "https://example.com/race"}
+        ).status_code
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        codes = sorted(pool.map(lambda _: post(), range(8)))
+
+    assert codes == [201] + [409] * 7
+    assert len(client.get("/items").json()["items"]) == 1
+
+
+def test_a_deleted_link_can_be_saved_again(client: TestClient) -> None:
+    first = save(client, type="link", url="https://example.com/again")
+    client.delete(f"/items/{first['id']}")
+
+    response = client.post("/items", json={"type": "link", "url": "https://example.com/again"})
+
+    assert response.status_code == 201
 
 
 # ---------- GET /items ----------

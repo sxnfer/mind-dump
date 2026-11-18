@@ -10,12 +10,14 @@ struct APIClient: Sendable {
     enum APIError: LocalizedError, Equatable {
         case unreachable            // backend not running, or no answer within the timeout
         case rejected(String)       // 422: the API explains what is wrong with the input
+        case alreadySaved           // 409: this link is already saved (migration 003)
         case unexpected(Int)        // any other status code
 
         var errorDescription: String? {
             switch self {
             case .unreachable: "Backend isn't running. Start it with docker compose up."
             case .rejected(let reason): reason
+            case .alreadySaved: "Already saved."
             case .unexpected(let code): "The backend answered \(code)."
             }
         }
@@ -51,6 +53,8 @@ struct APIClient: Sendable {
         switch code {
         case 201:
             return
+        case 409:
+            throw APIError.alreadySaved
         case 422:
             throw APIError.rejected(Self.firstValidationMessage(in: data) ?? "The backend rejected this.")
         default:

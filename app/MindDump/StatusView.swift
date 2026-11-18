@@ -118,6 +118,11 @@ private struct CaptureArea: View {
                     .foregroundStyle(.green)
                     .font(.system(size: 14, weight: .medium))
 
+            case .alreadySaved:
+                Label("Already saved", systemImage: "checkmark.circle")
+                    .foregroundStyle(.secondary)
+                    .font(.system(size: 14, weight: .medium))
+
             case .failed(let message):
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red)
