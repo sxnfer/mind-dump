@@ -13,16 +13,19 @@ Read each row in this order: what breaks without a solution, then the options, t
 | D19 | App shell | Native Swift: SwiftUI inside a floating macOS panel | Smoothest, fastest, most polished feel. Real notch-level placement is native on macOS. Tauri needed a community plugin for it and could stutter when the window resizes. |
 | D22 | App signing | Unsigned for now, with build-from-source docs | Signing needs a paid Apple Developer account. Revisit when real users arrive. |
 | D10 | Frontend stack | Replaced by D19. islandcn is the design reference only | React cannot run inside a native Swift app. |
+| D1 | Backend language | Python (3.12 in the container) | San knows it; strongest data and AI libraries. See `docs/decisions/D01-backend-language.md`. |
+| D13 | Packaging | Docker | Same image on any Mac, in CI and in Azure. See `docs/decisions/D13-packaging.md`. |
+| D14 | CI/CD | GitHub Actions | Code is on GitHub; free Linux and macOS runners. Uses actions from GitHub, the uv team and Docker. See `docs/decisions/D14-ci.md`. |
+| D17 | Licence | MIT | Short and well known. See `docs/decisions/D17-licence.md`. |
+| D2 | Web framework | FastAPI on Uvicorn | Input checks from type hints, generated docs, async. See `docs/decisions/D02-web-framework.md`. |
+| D24 | Python and dependency manager | uv with `uv.lock` | Same Python and exact library versions everywhere. See `docs/decisions/D24-python-env.md`. |
+| D25 | Test runner | pytest (+ httpx2 for TestClient) | Plain asserts, clear failures, fixtures. Dev only. See `docs/decisions/D25-test-runner.md`. |
+| D26 | Lint and format | ruff | One tool for lint and format, enforced in CI. Dev only. See `docs/decisions/D26-lint-format.md`. |
 
 ## Open
 
 | # | Decision | Problem it solves | Options to compare | Lean and why | Needed by |
 | --- | --- | --- | --- | --- | --- |
-| D1 | Backend language | One language for API and workers | Python, TypeScript, Swift on the server | Python. You know it, and the data tools are strong. | M0 |
-| D13 | Packaging | Same backend on any Mac and in the cloud | Docker | Docker. You already know it. | M0 |
-| D14 | CI/CD | Test and build on every push | GitHub Actions, others | GitHub Actions. The code is on GitHub, and public repos get free minutes. | M0 |
-| D17 | Licence | People need to know what they may do with the code | MIT, Apache-2.0, AGPL-3.0 | MIT or Apache-2.0. Short and well known; Apache adds a patent grant. | M0 |
-| D2 | Web framework | Routing, input checks, API docs | Python standard library server, FastAPI, Flask | Write the raw standard library version first (M0), then decide in M1. | M1 |
 | D3 | Main database | Store items, tags, status, vectors | Postgres (with pgvector), SQLite | Postgres. One store for rows and vectors, same as RAG Galaxy. | M1 |
 | D4 | Schema changes | Change tables safely as the app grows | Numbered SQL files run by a small script, a migration tool | Numbered SQL files first. Feel the pain, then pick a tool. | M1 |
 | D18 | How others run it | A stranger must start it in minutes, on their own bill | `docker compose up` on their Mac, a cloud template | Docker Compose. Your Azure deploy is your own proof. | M1 |

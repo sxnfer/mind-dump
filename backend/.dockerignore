@@ -1,0 +1,8 @@
+# Keep the build context small and never send local junk into the image.
+.venv/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+tests/
+Dockerfile
+.dockerignore

@@ -1,2 +1,18 @@
-.DS_Store
+# Secrets (rule 4). .env.example holds names only.
 .env
+
+# macOS
+.DS_Store
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Xcode
+app/build/
+DerivedData/
+xcuserdata/
+*.xcuserstate

@@ -8,7 +8,7 @@ The owner, San, is a data engineer who builds this to learn backend and DevOps p
 
 1. **No new dependency without approval.** Before you add any library, framework, tool or service, check `docs/plan/decisions.md`. If it is not Approved there, stop. Explain the problem it solves, what happens without it, and the options. San decides.
 2. **Every approval gets a record.** When San approves a decision, write `docs/decisions/DNN-short-name.md` from `docs/decisions/TEMPLATE.md`, and update its row in `docs/plan/decisions.md`.
-3. **Plain version first.** Where it is cheap, build the version without the tool first, so the tool solves a pain San has felt.
+3. **Explain the plain version; build the real one.** Do not build throwaway versions. Show the problem a tool solves (what breaks without it, how the tool works) with a visual Artifact explainer, then build the version we keep. (Changed by San on 2026-11-17; it replaces "plain version first".)
 4. **Never commit secrets.** Keys live in `.env`, which git ignores. `.env.example` holds names only.
 5. **Small branches, green CI.** One branch per milestone or smaller. Merge only when CI passes.
 
@@ -34,7 +34,7 @@ The owner, San, is a data engineer who builds this to learn backend and DevOps p
 
 ## Current status
 
-- Milestone: **M0** (not started).
-- Next step: San decides D1 (backend language), D13 (packaging), D14 (CI) and D17 (licence). Then write the four decision records and follow `docs/plan/milestones/m0-skeleton-tests-ci.md`.
+- M0: done and merged to `main` (PR #1). Repo is public; secret scanning, push protection and the ruleset "main: require CI" are on.
+- Milestone: **M1** (in progress, branch `m1-notes-and-links`, PR #2). Decisions D3, D4, D18, D27 approved.
 - Until 26 Nov 2026, the proof track (`docs/plan/proof-track.md`) sets the order: P0 to P4 are musts, backend only. The agent writes the code; San makes the decisions. A step is done only when San can defend it without notes.
 - Update this section when a milestone starts or ends.

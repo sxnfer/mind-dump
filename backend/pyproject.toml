@@ -1,0 +1,43 @@
+# What we ASK for (D24). The exact versions we GOT live in uv.lock.
+[project]
+name = "mind-dump"
+version = "0.1.0"
+description = "Mind Dump backend: the API and (from M3) the workers."
+authors = [
+    { email = "193922109+sxnfer@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+# Runtime dependencies: these ship in the Docker image.
+dependencies = [
+    "fastapi>=0.163.2",   # D2: routing, input checks, /docs
+    "uvicorn>=0.54.0",    # D2: the ASGI server that runs the app
+]
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
+
+# Dev-only dependencies: used on your Mac and in CI, never in the image.
+[dependency-groups]
+dev = [
+    "httpx2>=2.16.2",  # D25: needed by FastAPI's TestClient (successor to httpx)
+    "pytest>=9.2.0",   # D25: test runner
+    "ruff>=0.17.5",    # D26: lint and format
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/W: style errors, F: real bugs (undefined names, unused imports),
+# I: import order, B: likely bugs, UP: modern Python syntax, S: security checks.
+select = ["E", "W", "F", "I", "B", "UP", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use plain `assert` on purpose (S101 flags assert in app code).
+"tests/**" = ["S101"]
