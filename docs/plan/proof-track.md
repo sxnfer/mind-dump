@@ -35,16 +35,14 @@
 
 ## P0: Branch flow and gates
 
-**San decides.**
-- Environment branches (`develop` → DEV, `main` → PROD) or trunk-based (one `main`, promote builds)? For practice, environment branches match CarbonAI's setup.
-- What a PR must pass before merging: how many approvals, which checks.
-- The hotfix rule: where a hotfix branches from, and how it gets back to `develop`.
+**San decided (D29).** Trunk-based: one `main`, build once, promote the same image. A PR is required, with 0 approvals and the two CI checks. Hotfixes fix forward from `main` through DEV, never skipping it; `main` stays releasable with feature flags.
 
-**Agent builds.** Branch protection on both branches, a PR template (what changed, how it was tested, risk), and a hotfix drill run through real PRs.
+**Agent builds.** Branch protection on `main` (ruleset "main: require PR and CI"), a PR template (what changed, how it was tested, risk, and a releasable-`main` check), and a hotfix drill run through real PRs.
 **Proof.** A direct push to `main` is rejected (screenshot). The hotfix drill PR links.
 **Defend.**
 - What is the difference between a branch policy and an environment approval?
-- Walk through a Friday PROD hotfix. Why must it be merged back?
+- Walk through a Friday PROD hotfix with fix forward. What makes it safe to ship everything on `main`?
+- Why did you choose trunk-based over environment branches, and when would environment branches be the better choice?
 - Name two risks of environment branches.
 
 ## P1: Collect links safely
@@ -89,14 +87,14 @@
 ## P4: CI, checks before merge
 
 **San decides.**
-- What must pass before code may enter `develop`: lint? tests against a real database? migrations from an empty database? secret and security scans?
+- What must pass before code may enter `main`: lint? tests against a real database? migrations from an empty database? secret and security scans?
 - What is slow enough to run only after merge instead?
 
 **Agent builds.** A GitHub Actions workflow with your checks, made a required check in the P0 branch protection.
 **Proof.** A PR with a failing test can't merge (screenshot). A deliberate semantic conflict (a function renamed on one branch, the old name called on another) merges without a Git conflict, and CI catches it. Each scan's log shows it really ran.
 **Defend.**
 - Why can a merge with no conflicts still break the code? What catches it?
-- What must be true before code is allowed into `develop`, and why each check?
+- What must be true before code is allowed into `main`, and why each check?
 - How does this map to Azure DevOps? (Workflow ≈ YAML pipeline, required check ≈ build validation policy, runner ≈ build agent.)
 
 ## P5: CD, build once and deploy many
