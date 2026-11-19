@@ -37,5 +37,5 @@ The owner, San, is a data engineer who builds this to learn backend and DevOps p
 - M0: done and merged to `main` (PR #1). Repo is public; secret scanning, push protection and the ruleset "main: require PR and CI" are on.
 - Milestone: **M1** (in progress, branch `m1-notes-and-links`, PR #2). Decisions D3, D4, D18, D27 approved.
 - Until 26 Nov 2026, the proof track (`docs/plan/proof-track.md`) sets the order: P0 to P4 are musts, backend only. The agent writes the code; San makes the decisions. A step is done only when San can defend it without notes.
-- Proof track: **P0** in progress (branch `p0-branch-flow`). D29 decided: trunk-based, PR + CI gate, fix forward. Next: San's direct-push proof, the hotfix drill PR, then defend.
+- Proof track: **P0** in progress. D29 merged (PR #4): trunk-based, PR + CI gate, fix forward. Direct-push proof done (rejected by both rules). Next: the hotfix drill PR, then defend.
 - Update this section when a milestone starts or ends.
