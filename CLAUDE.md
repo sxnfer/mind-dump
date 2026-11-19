@@ -36,5 +36,5 @@ The owner, San, is a data engineer who builds this to learn backend and DevOps p
 
 - Milestone: **M0** (not started).
 - Next step: San decides D1 (backend language), D13 (packaging), D14 (CI) and D17 (licence). Then write the four decision records and follow `docs/plan/milestones/m0-skeleton-tests-ci.md`.
-- Until 26 Nov 2026, the proof track (`docs/plan/proof-track.md`) sets the order: P0 to P4 are musts, backend only. A step is done only when San can defend it without notes.
+- Until 26 Nov 2026, the proof track (`docs/plan/proof-track.md`) sets the order: P0 to P4 are musts, backend only. The agent writes the code; San makes the decisions. A step is done only when San can defend it without notes.
 - Update this section when a milestone starts or ends.
