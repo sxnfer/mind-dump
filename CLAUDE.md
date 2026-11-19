@@ -29,12 +29,12 @@ The owner, San, is a data engineer who builds this to learn backend and DevOps p
 | `docs/plan/product.md` | You work on a user-facing feature, the design, the animation, or who pays |
 | `docs/plan/repo-layout.md` | You create a top-level folder or wonder where a file goes |
 | `docs/plan/skills-map.md` | You write the README or prepare portfolio or interview notes |
+| `docs/plan/proof-track.md` | You work on a P-step (P0 to P7), or San asks to practise defending a choice. Until 26 Nov 2026 it sets the build order |
 | `docs/decisions/` | You need the reasoning behind one approved decision |
 
 ## Current status
 
-- Milestone: **M0** (in progress, branch `m0-skeleton`).
-- Done: decisions D1, D2, D13, D14, D17, D24, D25, D26; FastAPI `/health` with pytest tests; Dockerfile; notch panel app; CI workflow. M0 explainer: https://claude.ai/artifact/8iomnCxEsupJeNbxKUATko
-- Repo is public. Secret scanning, push protection and the ruleset "main: require CI" are on.
-- Next step: San checks the panel over a fullscreen app and on every Space, then merges PR #1. Then M1 (needs D3, D4, D18).
+- M0: done and merged to `main` (PR #1). Repo is public; secret scanning, push protection and the ruleset "main: require CI" are on.
+- Milestone: **M1** (in progress, branch `m1-notes-and-links`, PR #2). Decisions D3, D4, D18, D27 approved.
+- Until 26 Nov 2026, the proof track (`docs/plan/proof-track.md`) sets the order: P0 to P4 are musts, backend only. The agent writes the code; San makes the decisions. A step is done only when San can defend it without notes.
 - Update this section when a milestone starts or ends.
