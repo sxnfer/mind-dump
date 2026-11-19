@@ -29,10 +29,12 @@ The owner, San, is a data engineer who builds this to learn backend and DevOps p
 | `docs/plan/product.md` | You work on a user-facing feature, the design, the animation, or who pays |
 | `docs/plan/repo-layout.md` | You create a top-level folder or wonder where a file goes |
 | `docs/plan/skills-map.md` | You write the README or prepare portfolio or interview notes |
+| `docs/plan/proof-track.md` | You work on a P-step (P0 to P7), or San asks to practise defending a choice. Until 26 Nov 2026 it sets the build order |
 | `docs/decisions/` | You need the reasoning behind one approved decision |
 
 ## Current status
 
 - Milestone: **M0** (not started).
 - Next step: San decides D1 (backend language), D13 (packaging), D14 (CI) and D17 (licence). Then write the four decision records and follow `docs/plan/milestones/m0-skeleton-tests-ci.md`.
+- Until 26 Nov 2026, the proof track (`docs/plan/proof-track.md`) sets the order: P0 to P4 are musts, backend only. A step is done only when San can defend it without notes.
 - Update this section when a milestone starts or ends.
