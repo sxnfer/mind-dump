@@ -25,6 +25,7 @@ Read each row in this order: what breaks without a solution, then the options, t
 | D27 | Postgres driver | psycopg 3 + psycopg_pool | Plain SQL, safe parameters, pooling. See `docs/decisions/D27-postgres-driver.md`. |
 | D4 | Schema changes | Own runner, numbered SQL files | No dependency; shows how migrations work. See `docs/decisions/D04-migrations.md`. |
 | D18 | How others run it | Docker Compose | One command, health-gated order, data on a volume. See `docs/decisions/D18-compose.md`. |
+| D29 | Branch flow and hotfixes | Trunk-based: one `main`, PR required (0 approvals) with CI checks, build once and promote; hotfixes fix forward through DEV | The image tested in DEV is the image that ships; no merge-backs. See `docs/decisions/D29-branch-flow.md`. |
 
 ## Open
 

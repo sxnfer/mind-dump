@@ -29,12 +29,13 @@ The owner, San, is a data engineer who builds this to learn backend and DevOps p
 | `docs/plan/product.md` | You work on a user-facing feature, the design, the animation, or who pays |
 | `docs/plan/repo-layout.md` | You create a top-level folder or wonder where a file goes |
 | `docs/plan/skills-map.md` | You write the README or prepare portfolio or interview notes |
+| `docs/plan/proof-track.md` | You work on a P-step (P0 to P7), or San asks to practise defending a choice. Until 26 Nov 2026 it sets the build order |
 | `docs/decisions/` | You need the reasoning behind one approved decision |
 
 ## Current status
 
-- M0: done on branch `m0-skeleton` (PR #1); San checks the panel over a fullscreen app, then merges.
-- Milestone: **M1** (in progress, branch `m1-notes-and-links`, stacked on M0). Decisions D3, D4, D18, D27 approved. M1 explainer: https://claude.ai/artifact/DoHcxumH7LcRFnkFYUs4BE
-- Done in M1: Postgres via Compose, migration runner, items API with tests, + button in the panel.
-- Next step: San tests the + flow in the app; then the M1 PR; then a schema diagram in `docs/` (M1 proof).
+- M0: done and merged to `main` (PR #1). Repo is public; secret scanning, push protection and the ruleset "main: require PR and CI" are on.
+- Milestone: **M1** (in progress, branch `m1-notes-and-links`, PR #2). Decisions D3, D4, D18, D27 approved. Built: Postgres via Compose, migration runner, items API with tests, + button, 409 on duplicate links, schema diagram (`docs/schema.md`). Next: San tests the + flow in the app, then merges PR #2. M1 explainer: https://claude.ai/artifact/DoHcxumH7LcRFnkFYUs4BE
+- Until 26 Nov 2026, the proof track (`docs/plan/proof-track.md`) sets the order: P0 to P4 are musts, backend only. The agent writes the code; San makes the decisions. A step is done only when San can defend it without notes.
+- Proof track: **P0** in progress. D29 merged (PR #4): trunk-based, PR + CI gate, fix forward. Direct-push proof done (rejected by both rules). Next: the hotfix drill PR, then defend.
 - Update this section when a milestone starts or ends.
