@@ -22,6 +22,7 @@ Read each row in this order: what breaks without a solution, then the options, t
 | D25 | Test runner | pytest (+ httpx2 for TestClient) | Plain asserts, clear failures, fixtures. Dev only. See `docs/decisions/D25-test-runner.md`. |
 | D26 | Lint and format | ruff | One tool for lint and format, enforced in CI. Dev only. See `docs/decisions/D26-lint-format.md`. |
 | D29 | Branch flow and hotfixes | Trunk-based: one `main`, PR required (0 approvals) with CI checks, build once and promote; hotfixes fix forward through DEV | The image tested in DEV is the image that ships; no merge-backs. See `docs/decisions/D29-branch-flow.md`. |
+| D28 | Raw landing for links | Land every fetch, gzipped and append-only, with a `fetches` record; extract only from the landed file; raw and text hashes decide what to store and redo | Re-process offline after a parser bug or a dead page; no new dependency. Needs D5. See `docs/decisions/D28-raw-landing.md`. |
 
 ## Open
 

@@ -12,7 +12,8 @@ mind-dump/
 ├── docs/
 │   ├── plan/               # the plan, split by topic (read on demand)
 │   │   └── milestones/     # one file per milestone
-│   └── decisions/          # one record per decision
+│   ├── decisions/          # one record per decision
+│   └── learning/           # concepts.md: one interview-ready paragraph per concept San learns
 ├── .github/workflows/      # CI (M0)
 ├── docker-compose.yml      # one command to run the backend (M1)
 ├── .env.example            # settings names, no real values
