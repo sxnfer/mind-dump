@@ -36,7 +36,7 @@ The owner, San, is a data engineer who builds this to learn backend and DevOps p
 ## Current status
 
 - M0: done and merged to `main` (PR #1). Repo is public; secret scanning, push protection and the ruleset "main: require PR and CI" are on.
-- Milestone: **M1** (in progress, branch `m1-notes-and-links`, PR #2). Decisions D3, D4, D18, D27 approved.
+- Milestone: **M1** (in progress, branch `m1-notes-and-links`, PR #2). Decisions D3, D4, D18, D27 approved. Built: Postgres via Compose, migration runner, items API with tests, + button, 409 on duplicate links, schema diagram (`docs/schema.md`). Next: San tests the + flow in the app, then merges PR #2. M1 explainer: https://claude.ai/artifact/DoHcxumH7LcRFnkFYUs4BE
 - Until 26 Nov 2026, the proof track (`docs/plan/proof-track.md`) sets the order: P0 to P4 are musts, backend only. The agent writes the code; San makes the decisions. A step is done only when San can defend it without notes.
 - Proof track: **P0** in progress. D29 merged (PR #4): trunk-based, PR + CI gate, fix forward. Direct-push proof done (rejected by both rules). Hotfix drill done (PR #5). Next: defend Q2/Q3, logged in `docs/plan/proof-track.md`.
 - Data collection choices: 1 raw landing (D28) recorded; 2 idempotent jobs settled, record pending; 3 business key built (migration 003), record pending; 4 current vs history and 5 duplicate files not started.

@@ -3,17 +3,24 @@ import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Where the backend answers. One place to change it; settings come later.
-    private static let healthURL = URL(string: "http://127.0.0.1:8000/health")!
-
-    private let monitor = HealthMonitor(url: AppDelegate.healthURL)
+    private let api = APIClient.local
+    private lazy var monitor = HealthMonitor(url: api.healthURL)
+    private lazy var capture = CaptureModel(api: api)
     private var panel: NotchPanel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let panel = NotchPanel(rootView: StatusView(monitor: monitor))
+        let panel = NotchPanel(rootView: StatusView(monitor: monitor, capture: capture))
         panel.placeAtNotch()
+        syncGeometry(from: panel)
         panel.orderFrontRegardless()  // show it without making the app active
         self.panel = panel
+
+        // The model says "open" or "closed"; the panel resizes and takes or gives back focus.
+        capture.onExpandedChange = { [weak self, weak panel] expanded in
+            guard let self, let panel else { return }
+            panel.setExpanded(expanded)
+            self.syncGeometry(from: panel)
+        }
 
         // Re-place the panel when a display is plugged in, removed or rearranged.
         NotificationCenter.default.addObserver(
@@ -27,6 +34,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func screensChanged() {
-        panel?.placeAtNotch()
+        guard let panel else { return }
+        panel.placeAtNotch()
+        syncGeometry(from: panel)
+    }
+
+    private func syncGeometry(from panel: NotchPanel) {
+        capture.notchWidth = panel.notchWidth
+        capture.barHeight = panel.barHeight
     }
 }

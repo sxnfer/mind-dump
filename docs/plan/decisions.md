@@ -21,6 +21,10 @@ Read each row in this order: what breaks without a solution, then the options, t
 | D24 | Python and dependency manager | uv with `uv.lock` | Same Python and exact library versions everywhere. See `docs/decisions/D24-python-env.md`. |
 | D25 | Test runner | pytest (+ httpx2 for TestClient) | Plain asserts, clear failures, fixtures. Dev only. See `docs/decisions/D25-test-runner.md`. |
 | D26 | Lint and format | ruff | One tool for lint and format, enforced in CI. Dev only. See `docs/decisions/D26-lint-format.md`. |
+| D3 | Main database | Postgres 18 with pgvector | Many writers, SKIP LOCKED queue, vectors, managed in Azure. See `docs/decisions/D03-database.md`. |
+| D27 | Postgres driver | psycopg 3 + psycopg_pool | Plain SQL, safe parameters, pooling. See `docs/decisions/D27-postgres-driver.md`. |
+| D4 | Schema changes | Own runner, numbered SQL files | No dependency; shows how migrations work. See `docs/decisions/D04-migrations.md`. |
+| D18 | How others run it | Docker Compose | One command, health-gated order, data on a volume. See `docs/decisions/D18-compose.md`. |
 | D29 | Branch flow and hotfixes | Trunk-based: one `main`, PR required (0 approvals) with CI checks, build once and promote; hotfixes fix forward through DEV | The image tested in DEV is the image that ships; no merge-backs. See `docs/decisions/D29-branch-flow.md`. |
 | D28 | Raw landing for links | Land every fetch, gzipped and append-only, with a `fetches` record; extract only from the landed file; raw and text hashes decide what to store and redo | Re-process offline after a parser bug or a dead page; no new dependency. Needs D5. See `docs/decisions/D28-raw-landing.md`. |
 
@@ -28,9 +32,6 @@ Read each row in this order: what breaks without a solution, then the options, t
 
 | # | Decision | Problem it solves | Options to compare | Lean and why | Needed by |
 | --- | --- | --- | --- | --- | --- |
-| D3 | Main database | Store items, tags, status, vectors | Postgres (with pgvector), SQLite | Postgres. One store for rows and vectors, same as RAG Galaxy. | M1 |
-| D4 | Schema changes | Change tables safely as the app grows | Numbered SQL files run by a small script, a migration tool | Numbered SQL files first. Feel the pain, then pick a tool. | M1 |
-| D18 | How others run it | A stranger must start it in minutes, on their own bill | `docker compose up` on their Mac, a cloud template | Docker Compose. Your Azure deploy is your own proof. | M1 |
 | D5 | File storage | Large files do not belong in database rows | Local folder, object storage (Azure Blob) | Local folder behind one small interface; Blob in M7. | M2 |
 | D6 | Background work | Slow processing must not block "Saved" | Work inside the request, a jobs table in Postgres, a broker (Redis, Azure Service Bus) | Jobs table in Postgres. No new service, and it teaches queues from the inside. | M3 |
 | D7 | Content extraction | Turn web pages, PDFs and images into text | Reuse the RAG Galaxy parser, an HTML reader, OCR, a vision model | Reuse what you built. Add one source type at a time. | M3 |

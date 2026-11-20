@@ -10,6 +10,8 @@ requires-python = ">=3.12"
 # Runtime dependencies: these ship in the Docker image.
 dependencies = [
     "fastapi>=0.163.2",   # D2: routing, input checks, /docs
+    "psycopg-pool>=3.3.3",      # D27: reuse open Postgres connections
+    "psycopg[binary]>=3.3.9",   # D27: the Postgres driver (prebuilt C library)
     "uvicorn>=0.54.0",    # D2: the ASGI server that runs the app
 ]
 
