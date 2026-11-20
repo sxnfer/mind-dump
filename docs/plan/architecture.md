@@ -9,11 +9,12 @@ flowchart LR
     App["Mac app (Swift)<br/>notch panel: capture, status, ask"] -- HTTP --> API["API service<br/>save, search, agent"]
     API -- SQL --> DB[("Postgres<br/>items, tags, vectors, chats")]
     API -- "add job" --> Q["Job queue<br/>a Postgres table at first"]
-    API -- "store file" --> FS["File storage<br/>PDFs, images"]
+    API -- "store file" --> FS["File storage<br/>PDFs, images, raw pages"]
     Q -- "take job" --> W["Workers<br/>fetch, extract, chunk, embed, tag"]
     W -- "save results" --> DB
     W -- "read file" --> FS
     W -- fetch --> WEB["The web<br/>pages behind links"]
+    W -- "land raw page (D28)" --> FS
     W -- embed --> M["Model API<br/>embeddings, answers"]
     API -- "agent asks" --> M
 ```
