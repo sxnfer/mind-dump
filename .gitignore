@@ -16,3 +16,6 @@ app/build/
 DerivedData/
 xcuserdata/
 *.xcuserstate
+
+# Landed pages and uploads (D5) when running from a checkout
+/data/

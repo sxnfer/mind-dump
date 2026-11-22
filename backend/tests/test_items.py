@@ -188,7 +188,8 @@ def test_get_one_item(client: TestClient) -> None:
     response = client.get(f"/items/{saved['id']}")
 
     assert response.status_code == 200
-    assert response.json() == saved
+    # The same item, plus its page text: none yet, because nothing has fetched it (P1).
+    assert response.json() == {**saved, "content": None}
 
 
 def test_get_unknown_item_is_404(client: TestClient) -> None:

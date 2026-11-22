@@ -48,3 +48,18 @@ class ItemPage(BaseModel):
     items: list[Item]
     # Pass as ?before=<next_before> to get the next (older) page. None means no more.
     next_before: int | None
+
+
+class Version(BaseModel):
+    """One stretch of a page's history (D32): the text it showed from valid_from until valid_to."""
+
+    number: int  # 1 is the first text we saw
+    valid_from: datetime
+    valid_to: datetime | None  # None: still the current text
+    text: str
+
+
+class ItemDetail(Item):
+    # The page text at ?as_of=, or now. None for notes, for a link not fetched yet,
+    # and for a date before the first fetch.
+    content: Version | None = None
