@@ -12,5 +12,5 @@ Chosen: land every fetch, append-only, before extracting.
 - Extraction reads only from the landed file, never from the network.
 - A second SHA-256, of the extracted text, decides whether to re-chunk and re-embed. Same text: skip.
 Why: the source survives parser bugs, page changes and dead links; re-processing is offline and repeatable (same input every time), which M4 tuning needs; a 404 can never replace the last good copy; the fetch record explains any odd answer later. The raw hash skips storing identical bytes; the text hash skips paying for embeddings when only ads or markup changed.
-Cost: disk space, about 2 GB a year for one person (about 300 MB gzipped), plus a `fetches` table and files to delete when an item is deleted. No new dependency: `gzip` and `hashlib` are in Python's standard library. Depends on D5 (file storage), still Open.
+Cost: disk space, about 2 GB a year for one person (about 300 MB gzipped), plus a `fetches` table and files to delete when an item is deleted. No new dependency: `gzip` and `hashlib` are in Python's standard library. Depends on D5 (file storage), approved 2026-11-22: a local folder now, Azure Blob in P6.
 We will switch if: raw storage grows past what a laptop disk should hold. Then add a retention rule (for example, keep the first and the latest good fetch per item).

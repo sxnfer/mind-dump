@@ -4,7 +4,7 @@
 
 **Why this exists.** San is preparing for a Data Engineer role that also owns DevOps. The goal is to think like a data and DevOps engineer: to make the design choices, understand what was built, and defend it. **The agent writes the code. San makes the decisions.** If San can't explain a step, it isn't done, however good the code is.
 
-**Scope.** Backend only (Python, Postgres, Docker, GitHub Actions). The Swift app waits until after the interview. Use real documents as test data: carbon registry pages and methodology PDFs are good choices.
+**Scope.** Backend only (Python, Postgres, Docker, GitHub Actions). The Swift app waits until after the interview. **Interview format (San, 2026-11-22):** show the app live on San's Mac by screen share, then defend the choices. No public demo and no cloud are needed before 26 Nov; Azure (P5 to P7) proves deploys afterwards, and a later public demo would be read-only. Use real documents as test data: carbon registry pages and methodology PDFs are good choices.
 
 ## How every P-step runs
 
@@ -46,6 +46,8 @@
 - Name two risks of environment branches.
 
 ## P1: Collect links safely
+
+**San decided (D31, D32, with D28, D5, D7, D33).** Business key: the normalised URL (drop the fragment and named tracking parameters, keep the trailing slash), and a repeat save gets 409. History: versions with `valid_from` / `valid_to`, a new one only when the text hash changes, rebuilt from raw when the extractor changes. Raw files go to a local folder behind a `Storage` interface. HTML text comes from BeautifulSoup. Fetching uses `httpx2`. The demo shows `GET /items/{id}?as_of=<date>`.
 
 **San decides.**
 - The **business key** for a link. What counts as "the same URL"? (Upper or lower case? Tracking parameters? Trailing slash?)

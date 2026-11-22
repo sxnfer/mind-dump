@@ -3,7 +3,7 @@
 > Read this when: you are working on M3, or need its tasks and done-when list.
 
 **Goal:** saving stays fast; a worker reads, chunks and embeds each item later.
-**Decisions needed:** D6, D7, D8.
+**Decisions needed:** D6, D8. (Approved: D5 storage, D7 web extraction, D28 raw landing, D30 idempotent jobs, D32 page history, D33 fetch client. P1 builds the fetch, raw landing and versions part early, before 26 Nov.)
 **Tasks:**
 - `jobs` table: id, item_id, kind, status (queued, running, done, failed, dead), attempts, error, timestamps.
 - Workers claim a job safely so two workers never take the same one (`SELECT ... FOR UPDATE SKIP LOCKED`).
@@ -20,4 +20,8 @@
 - Append-only: a re-fetch that returns 404 lands a new file and a `fetches` row with status 404; the earlier good file is unchanged and the chunks stay.
 - Raw hash: a re-fetch with identical bytes adds a `fetches` row and no new file.
 - Text hash: a re-fetch where only an ad slot changed lands a new file but does not re-chunk or call the embedding API.
+**Done when (D30), each proved by a test:**
+- Crash before COMMIT: a worker that fails after deleting and inserting chunks, but before COMMIT, leaves the item's old chunks exactly as they were, and the job is not done.
+- Retry gives the same chunks: running the same job twice gives the same chunk set (same count, indexes and text), with no duplicates.
+- Fewer chunks leave no orphans: re-processing an item that now makes 3 chunks instead of 5 leaves exactly 3, with nothing left at indexes 3 and 4.
 **Gate 1:** a saved link is searchable on your Mac.
