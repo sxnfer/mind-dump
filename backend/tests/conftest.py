@@ -8,15 +8,18 @@ The tests refuse to run against any database not named mind_dump_test.
 """
 
 import os
+import shutil
 from collections.abc import Iterator
 from pathlib import Path
 
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
+from psycopg.rows import DictRow, dict_row
 
 from mind_dump.config import load_settings
 from mind_dump.migrate import migrate
+from mind_dump.storage import LocalStorage
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -68,15 +71,40 @@ def database_url() -> str:
     return url
 
 
+@pytest.fixture(scope="session")
+def storage_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Landed files go to a throwaway folder, never to <repo>/data."""
+    path = tmp_path_factory.mktemp("storage")
+    os.environ["STORAGE_DIR"] = str(path)  # what the app's lifespan reads
+    return path
+
+
 @pytest.fixture(autouse=True)
-def clean_tables(database_url: str) -> None:
-    """Every test starts with empty tables and ids from 1."""
+def clean_tables(database_url: str, storage_dir: Path) -> None:
+    """Every test starts with empty tables, ids from 1 and no landed files."""
     with psycopg.connect(database_url, autocommit=True) as conn:
-        conn.execute("TRUNCATE items, tags, item_tags RESTART IDENTITY CASCADE")
+        conn.execute(
+            "TRUNCATE items, tags, item_tags, fetches, item_versions RESTART IDENTITY CASCADE"
+        )
+    shutil.rmtree(storage_dir)
+    storage_dir.mkdir()
 
 
 @pytest.fixture
-def client(database_url: str) -> Iterator[TestClient]:
+def storage(storage_dir: Path) -> LocalStorage:
+    """The same folder the app uses, so API tests see what pages.py landed."""
+    return LocalStorage(storage_dir)
+
+
+@pytest.fixture
+def conn(database_url: str) -> Iterator[psycopg.Connection[DictRow]]:
+    """Autocommit, like the refetch command and (P3) the worker."""
+    with psycopg.connect(database_url, autocommit=True, row_factory=dict_row) as connection:
+        yield connection
+
+
+@pytest.fixture
+def client(database_url: str, storage_dir: Path) -> Iterator[TestClient]:
     """The `with` block runs the app's lifespan, so the pool opens and closes like in production."""
     from mind_dump.main import app
 

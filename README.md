@@ -25,9 +25,20 @@ xcodebuild -project app/MindDump.xcodeproj -scheme MindDump -derivedDataPath app
 open app/build/dd/Build/Products/Debug/MindDump.app
 ```
 
+### Fetch saved links and see their history
+
+Until the background worker arrives (P3), you fetch saved links with one command. Each fetch lands the raw page, records it, and opens a new version only when the article text changes.
+
+```bash
+docker compose exec api python -m mind_dump.refetch --all     # fetch every saved link now
+curl -s localhost:8000/items/1/versions                       # every text the page has shown
+curl -s "localhost:8000/items/1?as_of=2026-11-01"             # what it said on 1 November
+docker compose exec api python -m mind_dump.refetch --all --rebuild   # re-extract from landed files, no network
+```
+
 Right-click the panel to quit. The app is unsigned (see `docs/decisions/`), so build it from source.
 
-`docker compose down` stops everything and keeps your data. `docker compose down -v` deletes the data too.
+`docker compose down` stops everything and keeps your data (the database and the landed pages, in two volumes). `docker compose down -v` deletes the data too.
 
 ## Develop the backend
 

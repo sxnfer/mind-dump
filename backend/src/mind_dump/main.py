@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from mind_dump import items
 from mind_dump.config import load_settings
 from mind_dump.db import create_pool
+from mind_dump.storage import create_storage
 
 
 @asynccontextmanager
@@ -18,6 +19,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     at once (and Compose restarts the API) instead of on the first request.
     """
     settings = load_settings()
+    app.state.storage = create_storage(settings)  # D5: where raw pages live
     pool = create_pool(settings)
     pool.open(wait=True, timeout=10)
     app.state.pool = pool
@@ -27,7 +29,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pool.close()
 
 
-app = FastAPI(title="Mind Dump API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Mind Dump API", version="0.3.0", lifespan=lifespan)
 app.include_router(items.router)
 
 

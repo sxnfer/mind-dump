@@ -53,7 +53,7 @@
 - Raw landing: save the fetched HTML before parsing, or not? Named by what?
 - History: when a page changes, overwrite only, or keep versions? If versions, when does a new one start?
 
-**Agent builds.** Your choices, plus tests for them.
+**Agent builds.** Your choices, plus tests for them. Built on branch `p1-collect-links`: `urls.py` (business key), `storage.py` (D5), `extract.py` (D7), `fetcher.py` (D33), `pages.py` (land, record, version, rebuild), migrations 004 and 005, `GET /items/{id}?as_of=` and `/versions`, and `python -m mind_dump.refetch` until the P3 worker.
 **Proof.** Tests: saving the same URL twice gives 1 item; a changed page updates the item and adds 1 version; an unchanged page adds 0 versions; a query returns what the page said on a past date.
 **Defend.**
 - Why is a re-run safe? Name the property.

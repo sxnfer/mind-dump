@@ -44,6 +44,8 @@ services:
     image: mind-dump-api:local
     environment:
       <<: *database-url
+    volumes:
+      - rawdata:/data  # D5: landed pages live outside the container
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -53,3 +55,4 @@ services:
 
 volumes:
   pgdata:  # survives `docker compose down`; only `down -v` deletes it
+  rawdata:  # landed pages (D5, D28); same rule as pgdata

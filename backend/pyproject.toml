@@ -9,7 +9,9 @@ authors = [
 requires-python = ">=3.12"
 # Runtime dependencies: these ship in the Docker image.
 dependencies = [
+    "beautifulsoup4>=4.13",  # D7: HTML to article text (on the built-in html.parser)
     "fastapi>=0.163.2",   # D2: routing, input checks, /docs
+    "httpx2>=2.16.2",     # D33: fetch saved pages (also FastAPI's TestClient, D25)
     "psycopg-pool>=3.3.3",      # D27: reuse open Postgres connections
     "psycopg[binary]>=3.3.9",   # D27: the Postgres driver (prebuilt C library)
     "uvicorn>=0.54.0",    # D2: the ASGI server that runs the app
@@ -22,7 +24,6 @@ build-backend = "uv_build"
 # Dev-only dependencies: used on your Mac and in CI, never in the image.
 [dependency-groups]
 dev = [
-    "httpx2>=2.16.2",  # D25: needed by FastAPI's TestClient (successor to httpx)
     "pytest>=9.2.0",   # D25: test runner
     "ruff>=0.17.5",    # D26: lint and format
 ]
