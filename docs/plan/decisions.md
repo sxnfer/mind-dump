@@ -26,15 +26,20 @@ Read each row in this order: what breaks without a solution, then the options, t
 | D4 | Schema changes | Own runner, numbered SQL files | No dependency; shows how migrations work. See `docs/decisions/D04-migrations.md`. |
 | D18 | How others run it | Docker Compose | One command, health-gated order, data on a volume. See `docs/decisions/D18-compose.md`. |
 | D29 | Branch flow and hotfixes | Trunk-based: one `main`, PR required (0 approvals) with CI checks, build once and promote; hotfixes fix forward through DEV | The image tested in DEV is the image that ships; no merge-backs. See `docs/decisions/D29-branch-flow.md`. |
-| D28 | Raw landing for links | Land every fetch, gzipped and append-only, with a `fetches` record; extract only from the landed file; raw and text hashes decide what to store and redo | Re-process offline after a parser bug or a dead page; no new dependency. Needs D5. See `docs/decisions/D28-raw-landing.md`. |
+| D28 | Raw landing for links | Land every fetch, gzipped and append-only, with a `fetches` record; extract only from the landed file; raw and text hashes decide what to store and redo | Re-process offline after a parser bug or a dead page; no new dependency. Uses D5. See `docs/decisions/D28-raw-landing.md`. |
+| D5 | File storage | Local folder behind a `Storage` interface (`STORAGE_BACKEND=local`, a Compose volume); Azure Blob adapter in P6 | Users need no Azure account; a container's disk is wiped on redeploy, so cloud files live in Blob. No new dependency now. See `docs/decisions/D05-file-storage.md`. |
+| D7 | Content extraction (web pages) | BeautifulSoup on the built-in `html.parser`: `<main>`, else `<article>`, else `<body>`; drop page furniture; collapse whitespace before hashing | San can explain every rule, and so every version a page gets. PDFs and images are decided in P2 and M2. See `docs/decisions/D07-content-extraction.md`. |
+| D30 | Idempotent jobs | At-least-once: work first, mark done last; replace the item's chunk set (DELETE then INSERT) and mark the job done in one transaction | A crash repeats work, never loses it; no duplicates and no orphan chunks. See `docs/decisions/D30-idempotent-jobs.md`. |
+| D31 | Business key for links | Normalised URL (drop fragment and named tracking parameters; keep trailing slash), partial unique index, 409 on a repeat save | One item per page, even under racing saves; a false split beats a silent false merge. See `docs/decisions/D31-link-business-key.md`. |
+| D32 | Page history | `item_versions` with `valid_from` / `valid_to`; a new version only when the text hash changes; rebuilt from raw when the extractor changes | "What did it say on 1 November?" is one query. See `docs/decisions/D32-page-history.md`. |
+| D33 | Fetch client | `httpx2`, moved from dev to runtime | Already in the lockfile; mock transport for tests; redirect history for D28. See `docs/decisions/D33-fetch-client.md`. |
 
 ## Open
 
 | # | Decision | Problem it solves | Options to compare | Lean and why | Needed by |
 | --- | --- | --- | --- | --- | --- |
-| D5 | File storage | Large files do not belong in database rows | Local folder, object storage (Azure Blob) | Local folder behind one small interface; Blob in M7. | M2 |
+| D7b | Content extraction (PDFs, images) | Turn PDFs and images into text | Reuse the RAG Galaxy parser (pymupdf, pdfplumber), OCR, a vision model | Reuse what you built. Add one source type at a time. | P2 / M2 |
 | D6 | Background work | Slow processing must not block "Saved" | Work inside the request, a jobs table in Postgres, a broker (Redis, Azure Service Bus) | Jobs table in Postgres. No new service, and it teaches queues from the inside. | M3 |
-| D7 | Content extraction | Turn web pages, PDFs and images into text | Reuse the RAG Galaxy parser, an HTML reader, OCR, a vision model | Reuse what you built. Add one source type at a time. | M3 |
 | D8 | Embeddings and LLM | Search by meaning; answers and tags | Hosted model API (owner's key), a local model | Hosted API with the owner's key; a local model as an option later. | M3 |
 | D20 | Reranking | The first search returns close but not best chunks | None, a cross-encoder model, ask the LLM to rank | None first. Add one only if the eval set shows a gain. | M4 |
 | D9 | Agent loop | The model must call search and read items | Hand-written tool loop, an agent framework | Hand-written loop. About 100 lines, and you see every step. | M5 |
