@@ -61,3 +61,23 @@ def test_azure_backend_is_not_built_yet(monkeypatch: pytest.MonkeyPatch) -> None
 
     with pytest.raises(RuntimeError, match="P6"):
         create_storage(load_settings())
+
+
+def test_delete_removes_one_file_only(tmp_path: Path) -> None:
+    storage = LocalStorage(tmp_path)
+    storage.put("files/a", b"a")
+    storage.put("files/b", b"b")
+
+    storage.delete("files/a")
+
+    assert not (tmp_path / "files/a").exists()
+    assert storage.get("files/b") == b"b"
+
+
+def test_deleting_a_missing_file_is_not_an_error(tmp_path: Path) -> None:
+    LocalStorage(tmp_path).delete("files/never-there")
+
+
+def test_delete_checks_the_key_too(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Bad storage key"):
+        LocalStorage(tmp_path).delete("../outside")

@@ -64,11 +64,13 @@
 
 ## P2: Files
 
+**San decided (D34, with D5).** A file's identity is the SHA-256 of its bytes, never its name or size, and its storage key is `files/<sha256>`. A repeat upload gets 409 and the existing item's `Location`, like links. The body is the raw file (no multipart, so no new dependency), at most 25 MB, PDF, PNG or JPEG judged by the first bytes (413, 415). Delete removes the rows, then the file.
+
 **San decides.**
 - How a duplicate file is recognised (name, size, or content hash?).
 - What happens on a duplicate upload: return the existing item (200) or reject it (409)?
 
-**Agent builds.** Upload stored under its content hash, with your duplicate behaviour.
+**Agent builds.** Upload stored under its content hash, with your duplicate behaviour. Built on branch `p2-files`: `uploads.py` (magic bytes, storage key, safe filename), `POST /items/upload`, `Storage.delete`, migration 006 (file columns, unique index on the hash).
 **Proof.** Tests: same file twice gives 1 item and 1 stored file; deleting an item leaves no file behind.
 **Defend.** Why is a content hash right for files, but wrong for project records that change?
 
@@ -133,3 +135,4 @@ One line per question once San answers it cleanly without notes, including the f
 
 | Date | Step | Question | Clean? |
 | --- | --- | --- | --- |
+| 2026-11-24 | P2 | Why is a content hash right for files, but wrong for project records that change? Follow-up: what does the text hash still decide inside a record with a business key? | Main: yes. Follow-up: after two hints ("whether the content changed, so a new version starts"); re-ask once later. |
