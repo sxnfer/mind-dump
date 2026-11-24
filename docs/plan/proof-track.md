@@ -76,6 +76,8 @@
 
 ## P3: Jobs that survive a crash
 
+**San decided (D6, D35, D36, with D30).** A `jobs` table in Postgres with a status per job (queued, running, done, failed, dead), claimed with `FOR UPDATE SKIP LOCKED` and a lease. Chunks are replaced in one transaction with "done" (D30). Retry only timeouts, connection errors, 429 and 5xx, 3 tries with waits of 1 then 5 minutes, and a try counts when claimed. Chunks are paragraphs packed to about 1,000 characters, no overlap. P3 chunks only; embedding waits for D8.
+
 **San decides.**
 - How a worker knows what's done: one watermark for the run, or a status per job?
 - How rewriting chunks stays idempotent: upsert on (item_id, chunk_index), or delete-and-insert in one transaction? (Hint: what happens when a new chunker makes fewer chunks?)

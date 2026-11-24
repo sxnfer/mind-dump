@@ -34,13 +34,15 @@ Read each row in this order: what breaks without a solution, then the options, t
 | D32 | Page history | `item_versions` with `valid_from` / `valid_to`; a new version only when the text hash changes; rebuilt from raw when the extractor changes | "What did it say on 1 November?" is one query. See `docs/decisions/D32-page-history.md`. |
 | D33 | Fetch client | `httpx2`, moved from dev to runtime | Already in the lockfile; mock transport for tests; redirect history for D28. See `docs/decisions/D33-fetch-client.md`. |
 | D34 | File uploads | SHA-256 of the bytes is the identity and the key (`files/<sha256>`), partial unique index, 409 on a repeat upload; raw request body; 25 MB, PDF/PNG/JPEG decided by magic bytes (413, 415); delete rows, then the file | Names and sizes lie, a client can claim any type, and a raw body needs no new dependency. See `docs/decisions/D34-file-uploads.md`. |
+| D6 | Background work | `jobs` table in Postgres, a status per job (queued, running, done, failed, dead), claimed with `FOR UPDATE SKIP LOCKED` and a lease; P3 chunks only, embedding waits for D8 | No new service; each job fails and retries on its own; "done" commits with the chunks (D30). See `docs/decisions/D06-background-work.md`. |
+| D35 | Retries | Retry only timeouts, connection errors, 429 and 5xx; never other 4xx; 3 tries, waits of 1 then 5 minutes; then `dead` | Asking again only helps when the answer can change. See `docs/decisions/D35-retries.md`. |
+| D36 | Chunking | Paragraphs packed to about 1,000 characters, long paragraphs cut at sentence ends, no overlap; each chunk keeps its index and character positions | Whole ideas stay together, the rule is explainable, and no tokenizer is needed before D8. See `docs/decisions/D36-chunking.md`. |
 
 ## Open
 
 | # | Decision | Problem it solves | Options to compare | Lean and why | Needed by |
 | --- | --- | --- | --- | --- | --- |
 | D7b | Content extraction (PDFs, images) | Turn PDFs and images into text | Reuse the RAG Galaxy parser (pymupdf, pdfplumber), OCR, a vision model | Reuse what you built. Add one source type at a time. | P2 / M2 |
-| D6 | Background work | Slow processing must not block "Saved" | Work inside the request, a jobs table in Postgres, a broker (Redis, Azure Service Bus) | Jobs table in Postgres. No new service, and it teaches queues from the inside. | M3 |
 | D8 | Embeddings and LLM | Search by meaning; answers and tags | Hosted model API (owner's key), a local model | Hosted API with the owner's key; a local model as an option later. | M3 |
 | D20 | Reranking | The first search returns close but not best chunks | None, a cross-encoder model, ask the LLM to rank | None first. Add one only if the eval set shows a gain. | M4 |
 | D9 | Agent loop | The model must call search and read items | Hand-written tool loop, an agent framework | Hand-written loop. About 100 lines, and you see every step. | M5 |
