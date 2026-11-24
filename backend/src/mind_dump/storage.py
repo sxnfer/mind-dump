@@ -1,7 +1,8 @@
 """File storage behind one small interface (D5).
 
-The rest of the code only ever calls put, get and delete_prefix with a key such as
-`raw/7/20261103T090000000000Z-e5f61234.html.gz`. It never sees folders or containers.
+The rest of the code only ever calls put, get, delete and delete_prefix with a key such as
+`raw/7/20261103T090000000000Z-e5f61234.html.gz` or `files/<sha256>` (D34).
+It never sees folders or containers.
 STORAGE_BACKEND picks the adapter: `local` now, `azure` (Blob, managed identity) in P6.
 """
 
@@ -17,6 +18,7 @@ from mind_dump.config import Settings
 class Storage(Protocol):
     def put(self, key: str, data: bytes) -> None: ...
     def get(self, key: str) -> bytes: ...
+    def delete(self, key: str) -> None: ...
     def delete_prefix(self, prefix: str) -> None: ...
 
 
@@ -52,6 +54,10 @@ class LocalStorage:
 
     def get(self, key: str) -> bytes:
         return self._path(key).read_bytes()
+
+    def delete(self, key: str) -> None:
+        """Delete one file, e.g. `files/<sha256>`. Already gone is fine: deleting twice is safe."""
+        self._path(key).unlink(missing_ok=True)
 
     def delete_prefix(self, prefix: str) -> None:
         """Delete every file under `prefix/`, e.g. `raw/7` when item 7 is deleted."""

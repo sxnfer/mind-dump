@@ -36,12 +36,17 @@ NewItem = Annotated[NewNote | NewLink, Field(discriminator="type")]
 
 class Item(BaseModel):
     id: int
-    type: Literal["note", "link"]
+    type: Literal["note", "link", "file"]
     title: str | None
     url: str | None
     body: str | None
     status: str
     created_at: datetime
+    # Files only (D34); None for notes and links.
+    sha256: str | None = None  # the file's identity: the same bytes give the same hash
+    media_type: str | None = None  # decided from the file's first bytes, never the client
+    size_bytes: int | None = None
+    filename: str | None = None  # as the client sent it, reduced to the last path part
 
 
 class ItemPage(BaseModel):

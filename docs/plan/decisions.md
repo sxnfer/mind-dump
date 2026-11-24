@@ -33,6 +33,7 @@ Read each row in this order: what breaks without a solution, then the options, t
 | D31 | Business key for links | Normalised URL (drop fragment and named tracking parameters; keep trailing slash), partial unique index, 409 on a repeat save | One item per page, even under racing saves; a false split beats a silent false merge. See `docs/decisions/D31-link-business-key.md`. |
 | D32 | Page history | `item_versions` with `valid_from` / `valid_to`; a new version only when the text hash changes; rebuilt from raw when the extractor changes | "What did it say on 1 November?" is one query. See `docs/decisions/D32-page-history.md`. |
 | D33 | Fetch client | `httpx2`, moved from dev to runtime | Already in the lockfile; mock transport for tests; redirect history for D28. See `docs/decisions/D33-fetch-client.md`. |
+| D34 | File uploads | SHA-256 of the bytes is the identity and the key (`files/<sha256>`), partial unique index, 409 on a repeat upload; raw request body; 25 MB, PDF/PNG/JPEG decided by magic bytes (413, 415); delete rows, then the file | Names and sizes lie, a client can claim any type, and a raw body needs no new dependency. See `docs/decisions/D34-file-uploads.md`. |
 
 ## Open
 

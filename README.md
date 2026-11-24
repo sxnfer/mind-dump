@@ -36,6 +36,12 @@ curl -s "localhost:8000/items/1?as_of=2026-11-01"             # what it said on 
 docker compose exec api python -m mind_dump.refetch --all --rebuild   # re-extract from landed files, no network
 ```
 
+Upload a PDF, PNG or JPEG (at most 25 MB) as the raw request body. The same bytes twice give a 409 that points at the first copy, whatever the file is called.
+
+```bash
+curl -si --data-binary @file.pdf -H 'Content-Disposition: attachment; filename="file.pdf"' localhost:8000/items/upload
+```
+
 Right-click the panel to quit. The app is unsigned (see `docs/decisions/`), so build it from source.
 
 `docker compose down` stops everything and keeps your data (the database and the landed pages, in two volumes). `docker compose down -v` deletes the data too.
