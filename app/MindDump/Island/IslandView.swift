@@ -25,6 +25,7 @@ struct IslandView: View {
             .fill(.black)  // true black: on the hardware notch it disappears
             .animation(motion.corner, value: metrics.corner)
             .overlay(alignment: .top) { content }
+            .overlay(alignment: .top) { panelLayer }
             .clipShape(IslandBody(corner: metrics.corner))
             .animation(motion.corner, value: metrics.corner)
             .overlay { keyline(metrics: metrics, motion: motion) }
@@ -78,13 +79,8 @@ struct IslandView: View {
                     .id(activity.id)
                     .transition(transition)
             case .panel:
-                EmptyView()
+                EmptyView()  // the panel is its own layer: see `panelLayer`
             }
-            // The panel is never removed, only hidden. Rebuilding it on every open cost
-            // up to 70 ms with a long answer in it (every line laid out again), which
-            // delayed the open. Hidden, it costs nothing; shown, it is already built.
-            PanelView(island: island, panel: panel, monitor: monitor)
-                .modifier(PanelPresence(shown: island.presentation.isPanel, motion: island.motion))
         }
         // Content is laid out at its final size from the first frame; the growing body
         // reveals it. Text never reflows while the shape is moving.
@@ -100,6 +96,21 @@ struct IslandView: View {
                     .help("Save a note or link")
             }
         }
+    }
+
+    /// The panel is never removed, only hidden. Rebuilding it on every open cost up to
+    /// 70 ms with a long answer in it (every line laid out again), which delayed the open.
+    /// Hidden, it costs nothing; shown, it is already built.
+    ///
+    /// It is a layer of its own, not a child of the stack in `content`. A stack hands its
+    /// flexible children the size of its largest child, so with the 468-point panel in
+    /// it, the peek's + and status dot were laid out 468 points apart: outside the body,
+    /// where the clip hid them.
+    private var panelLayer: some View {
+        PanelView(island: island, panel: panel, monitor: monitor)
+            .modifier(PanelPresence(shown: island.presentation.isPanel, motion: island.motion))
+            // Its own full size from the first frame; the growing body reveals it.
+            .fixedSize(horizontal: true, vertical: true)
     }
 
     private var contentWidth: CGFloat {
