@@ -58,6 +58,7 @@ class Item(BaseModel):
     media_type: str | None = None  # decided from the file's first bytes, never the client
     size_bytes: int | None = None
     filename: str | None = None  # as the client sent it, reduced to the last path part
+    tags: list[str] = []  # the owner's labels, normalised and sorted (PUT /items/{id}/tags)
 
 
 class ItemPage(BaseModel):
@@ -124,3 +125,53 @@ class FileText(BaseModel):
     extractor: str  # "pypdf 7.1.1", or "<model> (image description)"
     pages: list[Page] | None  # PDFs only
     created_at: datetime
+
+
+class TagSet(BaseModel):
+    """The whole set of an item's tags. PUT replaces it; [] clears it. Each tag is
+    normalised (trimmed, inner spaces squeezed to one, lowercased) and repeats collapse."""
+
+    tags: list[str] = Field(max_length=100)
+
+
+class ItemTags(BaseModel):
+    item_id: int
+    tags: list[str]  # normalised and sorted
+
+
+class SearchItem(BaseModel):
+    """The item a passage comes from: enough to show it and to open it."""
+
+    id: int
+    type: Literal["note", "link", "file"]
+    title: str | None
+    url: str | None
+    filename: str | None
+    created_at: datetime
+
+
+class SearchHit(BaseModel):
+    """One passage that matched, where it sits, and how it was found (D37)."""
+
+    chunk_id: int
+    chunk_index: int  # 0, 1, 2, ... within the item
+    page: int | None  # PDFs: 1-based; None otherwise
+    start_char: int  # text == the item's text[start_char:end_char]
+    end_char: int
+    text: str
+    item: SearchItem
+    # How it was found. score is the RRF sum: 1 / (60 + rank) for each list it is in.
+    score: float
+    keyword_rank: int | None  # 1 is best; None: not in the keyword list
+    keyword_score: float | None  # ts_rank_cd, higher is better
+    vector_rank: int | None  # 1 is best; None: not in the vector list
+    vector_distance: float | None  # cosine distance, 0 to 2, lower is closer
+
+
+class SearchResponse(BaseModel):
+    query: str
+    requested_mode: Literal["hybrid", "keyword", "vector"]
+    mode: Literal["hybrid", "keyword", "vector"]  # what really ran
+    degraded: bool  # True: the requested mode could not run in full; notice says why
+    notice: str | None
+    hits: list[SearchHit]

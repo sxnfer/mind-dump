@@ -1,0 +1,145 @@
+{
+  "about": "The golden set for the search eval (M4). Each question names the corpus document (file name without .md) and an exact passage of it that answers the question. A search hit counts when a returned chunk from that document contains the passage. kind: words = shares its words with the passage; paraphrase = says it differently, with few or no shared words; identifier = holds an exact code or number. Written for this repo; the corpus is original text.",
+  "questions": [
+    {
+      "id": 1,
+      "kind": "words",
+      "question": "What does a credit's serial number encode?",
+      "document": "01-registries",
+      "passage": "encodes the project, the vintage year and a position in the issuance batch"
+    },
+    {
+      "id": 2,
+      "kind": "paraphrase",
+      "question": "Once a company has used up an offset, can it sell it on to someone else?",
+      "document": "01-registries",
+      "passage": "A retired credit can never be transferred again."
+    },
+    {
+      "id": 3,
+      "kind": "identifier",
+      "question": "How many credits from project MD-2291 went to the buffer pool?",
+      "document": "12-project-field-notes",
+      "passage": "of which 2,770 went to the buffer pool"
+    },
+    {
+      "id": 4,
+      "kind": "words",
+      "question": "What is the baseline scenario?",
+      "document": "02-methodologies",
+      "passage": "it describes what would have happened without the project"
+    },
+    {
+      "id": 5,
+      "kind": "identifier",
+      "question": "MD-AM-0042 flow meter calibration",
+      "document": "02-methodologies",
+      "passage": "requires the gas flow meter to be calibrated every twelve months"
+    },
+    {
+      "id": 6,
+      "kind": "paraphrase",
+      "question": "If the rulebook changes, do schemes already under way have to follow the new edition straight away?",
+      "document": "02-methodologies",
+      "passage": "running projects may keep the old version until their crediting period renews"
+    },
+    {
+      "id": 7,
+      "kind": "words",
+      "question": "investment analysis benchmark for the internal rate of return",
+      "document": "03-additionality",
+      "passage": "internal rate of return without credit revenue falls below a benchmark"
+    },
+    {
+      "id": 8,
+      "kind": "paraphrase",
+      "question": "Can a scheme count as extra when a shortage of trained staff held it back rather than cost?",
+      "document": "03-additionality",
+      "passage": "for example no local technicians, no access to loans"
+    },
+    {
+      "id": 9,
+      "kind": "identifier",
+      "question": "common practice threshold of twenty percent",
+      "document": "03-additionality",
+      "passage": "set the threshold at twenty percent market share"
+    },
+    {
+      "id": 10,
+      "kind": "words",
+      "question": "How many times can a renewable crediting period be renewed?",
+      "document": "04-crediting-periods",
+      "passage": "can be renewed up to two times, giving at most twenty-one years"
+    },
+    {
+      "id": 11,
+      "kind": "paraphrase",
+      "question": "Why do some schemes earn fewer offsets when their window comes up for extension?",
+      "document": "04-crediting-periods",
+      "passage": "Many projects lose credits at renewal, because grid electricity has become cleaner"
+    },
+    {
+      "id": 12,
+      "kind": "paraphrase",
+      "question": "What happens to the carbon held in woodland if it catches fire?",
+      "document": "05-permanence",
+      "passage": "a tonne stored in a tree can return to the air if the forest burns"
+    },
+    {
+      "id": 13,
+      "kind": "words",
+      "question": "What share of credits goes into the buffer pool?",
+      "document": "05-permanence",
+      "passage": "typically between ten and twenty percent, into a shared buffer account"
+    },
+    {
+      "id": 14,
+      "kind": "paraphrase",
+      "question": "If a long rerun of old data dies halfway, how do I avoid redoing everything?",
+      "document": "11-backfills",
+      "passage": "the checkpoint tells you where to resume"
+    },
+    {
+      "id": 15,
+      "kind": "paraphrase",
+      "question": "Does guarding one woodland just push the tree felling somewhere else?",
+      "document": "06-mrv-leakage",
+      "passage": "so logging can shift to a neighbouring forest"
+    },
+    {
+      "id": 16,
+      "kind": "words",
+      "question": "delete then insert inside one transaction",
+      "document": "07-idempotent-pipelines",
+      "passage": "The simplest pattern is delete then insert inside one transaction."
+    },
+    {
+      "id": 17,
+      "kind": "paraphrase",
+      "question": "How does the system find out that a worker crashed while holding a job?",
+      "document": "08-queues",
+      "passage": "if it crashes, the timeout runs out and the task becomes visible again for someone else"
+    },
+    {
+      "id": 18,
+      "kind": "identifier",
+      "question": "FOR UPDATE SKIP LOCKED",
+      "document": "08-queues",
+      "passage": "claiming rows with SELECT ... FOR UPDATE SKIP LOCKED"
+    },
+    {
+      "id": 19,
+      "kind": "paraphrase",
+      "question": "Which approach still lets me see where a client used to live after they move house?",
+      "document": "09-history-tables",
+      "passage": "Type 2 keeps the history: instead of updating the row, it closes it by setting a valid_to timestamp"
+    },
+    {
+      "id": 20,
+      "kind": "identifier",
+      "question": "What does alert DQ-117 mean?",
+      "document": "10-data-contracts",
+      "passage": "alert DQ-117 always means duplicate invoice numbers in the billing export"
+    }
+  ]
+}

@@ -66,6 +66,17 @@ jobs:
           TEST_DATABASE_URL: postgresql://mind_dump:ci-only-password@localhost:5432/mind_dump_test
         run: uv run pytest
 
+      # M4: the search eval. It loads the committed corpus (backend/eval/) through the
+      # real pipeline into its own database, asks the 20 golden questions, and prints
+      # recall@5 and MRR. CI has no model keys, so only keyword search is measured.
+      # The floor: keyword recall@5 was 0.40 (8 of 20, docs/results.md); 0.35 allows one
+      # question to slip, and two fail the build. To change it, run the eval locally,
+      # commit the new docs/results.md, and set the floor one question (0.05) below it.
+      - name: Search eval (keyword recall@5 floor)
+        env:
+          EVAL_DATABASE_URL: postgresql://mind_dump:ci-only-password@localhost:5432/mind_dump_eval
+        run: uv run python -m mind_dump.eval --modes keyword --no-results --min-keyword-recall 0.35
+
       # Buildx + the GitHub Actions cache keep Docker layers between runs.
       - uses: docker/setup-buildx-action@v3
       - name: Build image
@@ -111,6 +122,11 @@ jobs:
           test "$status" = ready
           curl --fail -sS "localhost:8000/items/$id/chunks" | tee /tmp/chunks.json
           python3 -c 'import json; c = json.load(open("/tmp/chunks.json")); assert len(c) >= 1, c'
+
+          # M4: search finds the note by its words. No VOYAGE_API_KEY, so hybrid falls
+          # back to keyword results and says so (D37).
+          curl --fail -sS "localhost:8000/search?q=smoke" | tee /tmp/search.json
+          python3 -c 'import json; r = json.load(open("/tmp/search.json")); assert r["mode"] == "keyword" and r["degraded"] and r["hits"], r'
 
           # M3 (D7b): upload a two-page PDF. CI has no model keys, so it ends ready with
           # chunks that carry page numbers and no vectors (D8: keys are optional).
