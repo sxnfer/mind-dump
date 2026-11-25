@@ -16,7 +16,7 @@ dependencies = [
     "psycopg-pool>=3.3.3",      # D27: reuse open Postgres connections
     "psycopg[binary]>=3.3.9",   # D27: the Postgres driver (prebuilt C library)
     "pypdf>=7.1.1",       # D7b: PDF text, page by page (pure Python, BSD)
-    "uvicorn>=0.54.0",    # D2: the ASGI server that runs the app
+    "uvicorn>=0.54.1",    # D2: the ASGI server that runs the app
 ]
 
 [build-system]
