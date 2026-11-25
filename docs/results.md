@@ -43,3 +43,8 @@ A number is the rank of the first right chunk (top 10). miss: not in the top 10;
 | 18 | identifier | FOR UPDATE SKIP LOCKED | 1 |
 | 19 | paraphrase | Which approach still lets me see where a client used to live after they move house? | miss |
 | 20 | identifier | What does alert DQ-117 mean? | 1 |
+
+## Answers (M5)
+
+Pending: the answers eval needs a run with `ANTHROPIC_API_KEY` set
+(`uv run python -m mind_dump.eval_answers` from `backend/`). No number here is estimated.
