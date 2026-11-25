@@ -93,12 +93,15 @@
 
 ## P4: CI, checks before merge
 
+**San decided (D40).** A pull request's branch must be up to date with `main` before it merges. Before merge, besides lint, tests, the image and the smoke test: the lockfile is current (`uv lock --check`); migrations run twice from an empty database and the second run applies nothing; gitleaks scans the PR's commits; `uv audit` checks the dependencies and Grype the image, and both block only when a fix exists (image: high or critical). A nightly run scans without that filter and emails San. Every action is pinned to a commit hash, and every scanner by digest or SHA-256. The real-model evals stay out of CI; no model keys in GitHub.
+
 **San decides.**
 - What must pass before code may enter `main`: lint? tests against a real database? migrations from an empty database? secret and security scans?
 - What is slow enough to run only after merge instead?
 
-**Agent builds.** A GitHub Actions workflow with your checks, made a required check in the P0 branch protection.
+**Agent builds.** A GitHub Actions workflow with your checks, made a required check in the P0 branch protection. Merged in four slices (PR #18, PR #20, PR #23, and the action pins): (A) `uv lock --check` and `backend/scripts/migrations_twice.sh` in the backend job; (B) a new job `scans (secrets, dependencies, image)` with gitleaks 8.30.1 (SHA-256-pinned release file) over the PR's or push's commits; (C) in that job, `uv audit` read by `backend/scripts/audit_gate.py` (tests on real `uv audit` output in `test_audit_gate.py`) and Grype 0.122.1 (digest-pinned image, `--only-fixed --fail-on high`, accepted risks in `.grype.yaml`), plus `.github/workflows/nightly-scans.yml`; (D) every action pinned to a full commit hash. The ruleset requires the new job since 2026-11-25; requiring an up-to-date branch is still to do.
 **Proof.** A PR with a failing test can't merge (screenshot). A deliberate semantic conflict (a function renamed on one branch, the old name called on another) merges without a Git conflict, and CI catches it. Each scan's log shows it really ran.
+**Proof so far (2026-11-25).** Four pull requests broke one rule each, failed at the right step, were blocked from merging, and were closed unmerged: a stale lockfile at "Lockfile is current" (PR #19); a made-up key-shaped string at "Secret scan (gitleaks)", rule `generic-api-key` (PR #22); `jinja2==3.1.2` at "Dependency audit", 5 findings with a fix (PR #24); the base image `python:3.12.0-slim` at "Image scan (Grype)", High and Critical findings with a fix (PR #25). Not done yet: the failing-test proof, the semantic-conflict proof, and a first nightly run.
 **Defend.**
 - Why can a merge with no conflicts still break the code? What catches it?
 - What must be true before code is allowed into `main`, and why each check?
