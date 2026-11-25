@@ -83,7 +83,8 @@
 - How rewriting chunks stays idempotent: upsert on (item_id, chunk_index), or delete-and-insert in one transaction? (Hint: what happens when a new chunker makes fewer chunks?)
 - Which fetch errors to retry, how many times, and how long to wait between tries.
 
-**Agent builds.** A jobs table with statuses, safe claiming of jobs so two workers never take the same one, your write strategy, and your retry rules.
+**Agent builds.** A jobs table with statuses, safe claiming of jobs so two workers never take the same one, your write strategy, and your retry rules. Built on branch `p3-jobs`: migrations 007 (`jobs`, with the lease and one unfinished job per item) and 008 (`chunks`), `jobs.py` (enqueue, claim with `FOR UPDATE SKIP LOCKED`, done / failed / dead), `chunking.py` (D36), `worker.py` (`python -m mind_dump.worker`, the Compose service `worker`), saving queues the job in the same transaction, `status` and `error` on every item, `POST /items/{id}/process` and `GET /items/{id}/chunks`, and a CI smoke step that waits for a note to become ready. Embeddings wait for D8.
+**Proof tests.** `test_worker_process.py` (a worker process killed before COMMIT, then a second worker finishes the job once), `test_worker.py` (D30, D35, D28 through the worker), `test_jobs.py` (concurrent claims, lease, a try counts when claimed), `test_chunking.py`, `test_jobs_api.py`.
 **Proof.** Kill a worker mid-job, restart it, and the item has exactly one set of chunks. A 404 is not retried; a 503 is.
 **Defend.**
 - The worker dies after writing chunks but before marking the job done. What happens on restart, and why is it still correct?
