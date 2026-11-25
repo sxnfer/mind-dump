@@ -80,7 +80,8 @@ jobs:
 
       # The smoke test runs the exact command a stranger types: docker compose up.
       # It also proves the M1 done-when: a saved link survives a restart of both containers,
-      # and the P3 one: the worker container picks up a saved note and chunks it.
+      # the P3 one: the worker container picks up a saved note and chunks it, and M3's:
+      # the image can read a PDF, with no model keys at all.
       - name: Smoke test (compose up, save, restart, read back)
         working-directory: .
         run: |
@@ -110,6 +111,24 @@ jobs:
           test "$status" = ready
           curl --fail -sS "localhost:8000/items/$id/chunks" | tee /tmp/chunks.json
           python3 -c 'import json; c = json.load(open("/tmp/chunks.json")); assert len(c) >= 1, c'
+
+          # M3 (D7b): upload a two-page PDF. CI has no model keys, so it ends ready with
+          # chunks that carry page numbers and no vectors (D8: keys are optional).
+          (cd backend && uv run python tests/pdfs.py /tmp/smoke.pdf)
+          id=$(curl --fail -sS --data-binary @/tmp/smoke.pdf \
+            -H 'Content-Disposition: attachment; filename="smoke.pdf"' localhost:8000/items/upload \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])')
+          status=""
+          for _ in $(seq 1 30); do
+            status=$(curl --fail -sS "localhost:8000/items/$id" \
+              | python3 -c 'import json, sys; print(json.load(sys.stdin)["status"])')
+            echo "pdf $id: $status"
+            [ "$status" = ready ] && break
+            sleep 1
+          done
+          test "$status" = ready
+          curl --fail -sS "localhost:8000/items/$id/chunks" | tee /tmp/pdf_chunks.json
+          python3 -c 'import json; c = json.load(open("/tmp/pdf_chunks.json")); assert [x["page"] for x in c] == [1, 2], c; assert not any(x["embedded"] for x in c), c'
       - name: Compose logs (on failure)
         if: failure()
         working-directory: .

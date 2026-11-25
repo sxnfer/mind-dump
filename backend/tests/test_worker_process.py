@@ -21,6 +21,7 @@ import psycopg
 from psycopg.rows import DictRow
 
 from mind_dump import jobs
+from mind_dump.embeddings import FakeEmbedder
 from mind_dump.fetcher import make_client
 from mind_dump.storage import LocalStorage
 from mind_dump.worker import Worker
@@ -34,6 +35,7 @@ import os, sys
 from pathlib import Path
 import psycopg
 from psycopg.rows import dict_row
+from mind_dump.embeddings import FakeEmbedder
 from mind_dump.fetcher import make_client
 from mind_dump.storage import LocalStorage
 from mind_dump.worker import Worker
@@ -52,7 +54,7 @@ with (
         os._exit(42)
 
     Worker(conn=conn, storage=LocalStorage(Path(storage_dir)), http=http,
-           before_commit=die).run_once()
+           embedder=FakeEmbedder(), before_commit=die).run_once()
 print("the hook never ran", flush=True)
 sys.exit(1)
 """
@@ -64,7 +66,8 @@ def paragraphs(n: int, tag: str) -> str:
 
 def chunk_rows(conn: Conn, item_id: int) -> list[DictRow]:
     return conn.execute(
-        "SELECT id, chunk_index, start_char, end_char, text FROM chunks"
+        "SELECT id, chunk_index, start_char, end_char, text,"
+        " embedding::text AS embedding, embedding_model FROM chunks"
         " WHERE item_id = %s ORDER BY chunk_index",
         (item_id,),
     ).fetchall()
@@ -105,9 +108,10 @@ def test_a_worker_killed_before_commit_loses_nothing_and_the_job_completes_once(
     ).fetchone()["id"]
     jobs.enqueue(conn, item_id)
     with make_client(httpx2.MockTransport(lambda r: httpx2.Response(500))) as http:
-        Worker(conn=conn, storage=storage, http=http).run_once()
+        Worker(conn=conn, storage=storage, http=http, embedder=FakeEmbedder()).run_once()
     before = chunk_rows(conn, item_id)
     assert len(before) == 4
+    assert all(r["embedding"] is not None for r in before)  # with vectors (D8)
 
     # The note changes, and a new run is queued.
     conn.execute("UPDATE items SET body = %s WHERE id = %s", (paragraphs(2, "new"), item_id))
@@ -128,13 +132,17 @@ def test_a_worker_killed_before_commit_loses_nothing_and_the_job_completes_once(
     job = job_of(conn, item_id)
     assert job["status"] == "running"  # not done
     assert job["attempts"] == 1
-    assert chunk_rows(conn, item_id) == before  # the old chunks, exactly: same ids and text
+    assert chunk_rows(conn, item_id) == before  # the old chunks, exactly: ids, text, vectors
 
     # A second worker: nothing to claim while the dead worker's lease lasts...
     lease_end = job["locked_until"]
     with make_client(httpx2.MockTransport(lambda r: httpx2.Response(500))) as http:
         second = Worker(
-            conn=conn, storage=storage, http=http, clock=lambda: lease_end - timedelta(seconds=1)
+            conn=conn,
+            storage=storage,
+            http=http,
+            clock=lambda: lease_end - timedelta(seconds=1),
+            embedder=FakeEmbedder(),
         )
         assert second.run_once() is None
         # ...and once it has run out, it takes the job again and finishes it.
@@ -146,6 +154,7 @@ def test_a_worker_killed_before_commit_loses_nothing_and_the_job_completes_once(
     after = chunk_rows(conn, item_id)
     assert [r["chunk_index"] for r in after] == [0, 1]  # exactly one set...
     assert all(r["text"].startswith("new") for r in after)  # ...of the new text
+    assert all(r["embedding_model"] == "fake-embedder" for r in after)  # each with a vector
     total = conn.execute("SELECT count(*) AS n FROM chunks").fetchone()["n"]
     assert total == 2
 

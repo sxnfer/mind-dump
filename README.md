@@ -4,7 +4,7 @@
 
 An open-source "second brain" for macOS. Drop links, files, images and notes on a black panel at the notch. A local backend saves them at once, processes them in the background, and answers questions with citations. Each person runs their own copy on their own Mac, with their own AI model key.
 
-> Status: Milestone 1. Press + on the panel to save the link on your clipboard, or a note. Items live in Postgres and survive restarts. Nothing is processed or searchable yet.
+> Status: Milestone 3. Press + on the panel to save the link on your clipboard, or a note; upload PDFs and images through the API. A worker reads, chunks and (with your key) embeds each item in the background. Search arrives in Milestone 4.
 
 ## Run it
 
@@ -14,9 +14,10 @@ You need Docker Desktop and Xcode.
 # 1. Settings: copy the example and set a database password
 cp .env.example .env
 sed -i '' "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 24)/" .env
+#    Optional: add VOYAGE_API_KEY and ANTHROPIC_API_KEY to .env (see "AI model keys" below)
 
-# 2. Backend: Postgres, then migrations, then the API, in order
-docker compose up -d --wait api
+# 2. Backend: Postgres, then migrations, then the API and the worker, in order
+docker compose up -d --wait api worker
 curl -i http://localhost:8000/health          # {"status":"ok"}
 open http://localhost:8000/docs               # generated API docs
 
@@ -27,7 +28,7 @@ open app/build/dd/Build/Products/Debug/MindDump.app
 
 ### Fetch saved links and see their history
 
-Until the background worker arrives (P3), you fetch saved links with one command. Each fetch lands the raw page, records it, and opens a new version only when the article text changes.
+The worker fetches saved links by itself (P3). This command fetches them now, in the terminal. Each fetch lands the raw page, records it, and opens a new version only when the article text changes.
 
 ```bash
 docker compose exec api python -m mind_dump.refetch --all     # fetch every saved link now
@@ -36,11 +37,33 @@ curl -s "localhost:8000/items/1?as_of=2026-11-01"             # what it said on 
 docker compose exec api python -m mind_dump.refetch --all --rebuild   # re-extract from landed files, no network
 ```
 
-Upload a PDF, PNG or JPEG (at most 25 MB) as the raw request body. The same bytes twice give a 409 that points at the first copy, whatever the file is called.
+Upload a PDF, PNG or JPEG (at most 25 MB) as the raw request body. The same bytes twice give a 409 that points at the first copy, whatever the file is called. The worker reads a PDF's text page by page; an image gets a description from Claude (it needs `ANTHROPIC_API_KEY`).
 
 ```bash
 curl -si --data-binary @file.pdf -H 'Content-Disposition: attachment; filename="file.pdf"' localhost:8000/items/upload
+curl -s localhost:8000/items/1                 # status: queued, processing, ready or error
+curl -s localhost:8000/items/1/text            # the file's text, with its pages
+curl -s localhost:8000/items/1/chunks          # passages with page numbers, and whether each has a vector
 ```
+
+### AI model keys (optional)
+
+Each owner uses their own keys (D8). Both are optional:
+
+| Key | Get it at | Without it |
+| --- | --- | --- |
+| `VOYAGE_API_KEY` | dashboard.voyageai.com | Everything is saved, read and chunked; chunks have no vectors, so no search by meaning yet. |
+| `ANTHROPIC_API_KEY` | platform.claude.com | Images end in `error` (there is nothing to read without a description); notes, links and PDFs work. |
+
+Put them in `.env`, then:
+
+```bash
+docker compose up -d worker api                                   # pick up the new settings
+docker compose exec worker python -m mind_dump.check_models       # OK per provider, or the reason
+docker compose exec worker python -m mind_dump.embed_missing      # embed what was saved before
+```
+
+Run `embed_missing` again after changing `EMBEDDING_MODEL`: vectors from two models can't be compared. When keys are set, item text goes to Voyage AI and images go to Anthropic.
 
 Right-click the panel to quit. The app is unsigned (see `docs/decisions/`), so build it from source.
 

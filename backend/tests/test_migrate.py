@@ -5,6 +5,7 @@ from pathlib import Path
 import psycopg
 import pytest
 
+from mind_dump.config import load_settings
 from mind_dump.migrate import discover, migrate
 
 
@@ -57,3 +58,33 @@ def test_rejects_duplicate_versions(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="share version 001"):
         discover(tmp_path)
+
+
+def test_009_queues_a_job_for_every_file_saved_before_it(database_url: str, tmp_path: Path) -> None:
+    """Files saved in P2 had no job; migration 009 gives each one, as 007 did for notes."""
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        conn.execute("DROP SCHEMA IF EXISTS migrate_test CASCADE")
+        conn.execute("CREATE SCHEMA migrate_test")
+    # public stays on the path: the vector type lives where CREATE EXTENSION first put it.
+    scratch = f"{database_url}?options=-csearch_path%3Dmigrate_test,public"
+    real = load_settings().migrations_dir
+    for path in sorted(real.glob("00[1-8]_*.sql")):
+        (tmp_path / path.name).write_text(path.read_text())
+    migrate(scratch, tmp_path)
+    with psycopg.connect(scratch, autocommit=True) as conn:
+        conn.execute(
+            "INSERT INTO items (type, sha256, media_type, size_bytes)"
+            " VALUES ('file', repeat('a', 64), 'application/pdf', 10)"
+        )
+        conn.execute("INSERT INTO items (type, body) VALUES ('note', 'already has a job')")
+        conn.execute("INSERT INTO jobs (item_id) SELECT id FROM items WHERE type = 'note'")
+
+    (tmp_path / "009_x.sql").write_text((real / "009_file_text_and_embeddings.sql").read_text())
+    assert migrate(scratch, tmp_path) == ["009"]
+
+    with psycopg.connect(scratch) as conn:
+        rows = conn.execute(
+            "SELECT i.type, j.kind, j.status FROM jobs j JOIN items i ON i.id = j.item_id"
+            " ORDER BY i.type"
+        ).fetchall()
+    assert rows == [("file", "process", "queued"), ("note", "process", "queued")]

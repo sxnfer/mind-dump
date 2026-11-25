@@ -2,7 +2,7 @@
 
 > The source of truth is `backend/migrations/`. Update this diagram in the same PR as any new migration.
 
-As of migration 008 (P3):
+As of migration 009 (M3):
 
 ```mermaid
 erDiagram
@@ -14,6 +14,7 @@ erDiagram
     items ||--o{ jobs : "processed by"
     items ||--o{ chunks : "cut into"
     item_versions |o--o{ chunks : "cut from"
+    items ||--o| file_texts : "files: text read from"
 
     items {
         bigint      id PK "identity"
@@ -51,7 +52,7 @@ erDiagram
     jobs {
         bigint      id PK "identity"
         bigint      item_id FK "ON DELETE CASCADE"
-        text        kind "process | rebuild"
+        text        kind "process | rebuild | embed"
         text        status "queued | running | failed | done | dead"
         smallint    attempts "0-3, +1 when claimed"
         timestamptz run_after "not claimable before"
@@ -70,6 +71,19 @@ erDiagram
         text        text "= source_text[start_char:end_char]"
         text        source_sha256 "of the whole source text"
         bigint      item_version_id FK "links only; ON DELETE SET NULL"
+        integer     page "PDFs only: 1-based; null otherwise"
+        vector      embedding "vector(1024); null until embedded (D8)"
+        text        embedding_model "the model that made embedding"
+        timestamptz created_at
+    }
+    file_texts {
+        bigint      item_id PK, FK "ON DELETE CASCADE; files only"
+        text        text "a PDF's pages, or an image's description"
+        text        text_sha256
+        text        file_sha256 "items.sha256 it was made from"
+        integer_arr page_starts "PDFs: page n = text[start:end]"
+        integer_arr page_ends "PDFs only"
+        text        extractor "pypdf 7.1.1, or <model> (image description)"
         timestamptz created_at
     }
     tags {
@@ -106,6 +120,11 @@ erDiagram
 | Deleting an item deletes its `jobs` and `chunks` | `ON DELETE CASCADE`. A worker holding a deleted item's job finds it gone and writes nothing. |
 | A chunk's `(item_id, chunk_index)` is unique (`chunks_item_index_key`) | One set per item. A job replaces the whole set in one transaction with "done" (D30). |
 | A chunk's `end_char > start_char` and its text is non-empty | Positions must point at real text, for citations (D36). |
+| A chunk has an `embedding` exactly when it has an `embedding_model` (`chunks_embedding_has_model`) | Vectors from two models can't be compared, so every vector says which model made it (D8). |
+| `embedding` is `vector(1024)` | Postgres refuses a vector of any other length, so a wrong model setting fails loudly instead of storing vectors search can't use. |
+| A chunk's `page` is 1 or more | Page numbers count from 1, like the PDF viewer (D7b). |
+| One `file_texts` row per file item; its page arrays are both null or the same length | Chunks point into one text. It is written in the same transaction as the chunks (D30), and rebuilt from the stored file when asked. |
+| Deleting an item deletes its `file_texts` | `ON DELETE CASCADE`; the API then deletes the stored file. |
 | `tags.name` is unique | One row per tag name; items share it. |
 
 ## Indexes
@@ -121,8 +140,11 @@ erDiagram
 | `jobs_one_open_per_item` (unique, partial) | The one-unfinished-job rule, and the `ON CONFLICT` in `jobs.enqueue` |
 | `jobs_item_idx` `(item_id, id)` | An item's latest job: its processing state in `GET /items` |
 | `chunks_item_index_key` `(item_id, chunk_index)` | An item's chunks in order (`GET /items/{id}/chunks`) |
+| `file_texts` primary key `(item_id)` | A file's text (`GET /items/{id}/text`) |
 | `item_tags` primary key `(item_id, tag_id)` | Tags of one item |
 | `item_tags_tag_id_idx` | Items with one tag |
+
+No vector index yet: search (M4) adds an HNSW index on `chunks.embedding` with the queries that use it.
 
 `schema_migrations` is created by the migration runner (`mind_dump.migrate`), not by a migration file.
 
@@ -133,11 +155,11 @@ The API derives each item's `status` from its latest job:
 
 | Latest job | Item `status` | `error` |
 | --- | --- | --- |
-| none (files, for now) | `saved` | none |
+| none (should not happen: every item gets a job when saved) | `saved` | none |
 | `queued` | `queued` | none |
 | `running` | `processing` | none |
 | `failed` | `retrying` | the failure's reason |
 | `done` | `ready` | none |
 | `dead` | `error` | why it gave up |
 
-Migration 007 also queued one job for every note and link saved before it, so the worker catches them up.
+Migration 007 also queued one job for every note and link saved before it, so the worker catches them up. Migration 009 did the same for files (M3), and added the job kind `embed`: embed an item's existing chunks with no fetch and no re-chunking (queued by `python -m mind_dump.embed_missing`).

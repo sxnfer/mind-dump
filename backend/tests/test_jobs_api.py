@@ -107,14 +107,29 @@ def test_a_duplicate_link_queues_no_second_job(client: TestClient, conn: Conn) -
     assert len(jobs_of(conn, item["id"])) == 1
 
 
-def test_an_uploaded_file_shows_saved_and_gets_no_job(client: TestClient, conn: Conn) -> None:
+def test_an_uploaded_file_is_queued_with_one_job(client: TestClient, conn: Conn) -> None:
     response = client.post("/items/upload", content=PNG)
     assert response.status_code == 201
     item = response.json()
 
-    assert item["status"] == "saved"
-    assert client.get(f"/items/{item['id']}").json()["status"] == "saved"
-    assert jobs_of(conn, item["id"]) == []
+    assert item["status"] == "queued"  # M3: files are processed too (was "saved")
+    assert client.get(f"/items/{item['id']}").json()["status"] == "queued"
+    assert jobs_of(conn, item["id"]) == [{"kind": "process", "status": "queued", "attempts": 0}]
+    # Saving did no work: nothing extracted, nothing chunked.
+    assert conn.execute("SELECT count(*) AS n FROM file_texts").fetchone()["n"] == 0
+
+
+def test_a_file_is_never_saved_without_its_job(
+    client: TestClient, conn: Conn, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken_enqueue(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("the queue is broken")
+
+    monkeypatch.setattr(items_module.jobs, "enqueue", broken_enqueue)
+    with pytest.raises(RuntimeError, match="the queue is broken"):
+        client.post("/items/upload", content=PNG)
+
+    assert conn.execute("SELECT count(*) AS n FROM items").fetchone()["n"] == 0
 
 
 # ---------- the processing state follows the latest job ----------
@@ -141,6 +156,9 @@ def test_after_the_worker_runs_the_item_is_ready_with_chunks(
             "start_char": 0,
             "end_char": 35,
             "text": "First paragraph.\n\nSecond paragraph.",
+            "page": None,  # notes have no pages
+            "embedded": False,  # this worker has no embedder (no VOYAGE_API_KEY)
+            "embedding_model": None,
         }
     ]
     link_chunks = client.get(f"/items/{link['id']}/chunks").json()
@@ -226,9 +244,14 @@ def test_process_an_unknown_item_is_404(client: TestClient) -> None:
     assert client.post("/items/999/process").status_code == 404
 
 
-def test_process_a_file_is_422_for_now(client: TestClient) -> None:
+def test_process_a_file_queues_a_run(client: TestClient, conn: Conn) -> None:
     file_id = client.post("/items/upload", content=PNG).json()["id"]
-    assert client.post(f"/items/{file_id}/process").status_code == 422
+    conn.execute("UPDATE jobs SET status = 'dead', error = 'x', finished_at = now()")
+
+    response = client.post(f"/items/{file_id}/process", params={"from_raw": "true"})
+
+    assert response.status_code == 202  # M3: files are processed (was 422)
+    assert response.json()["kind"] == "rebuild"
 
 
 # ---------- chunks and delete ----------
@@ -260,4 +283,4 @@ def test_deleting_an_item_removes_its_jobs_and_chunks(
 
 
 def test_the_api_version_is_bumped(client: TestClient) -> None:
-    assert client.get("/openapi.json").json()["info"]["version"] == "0.4.0"
+    assert client.get("/openapi.json").json()["info"]["version"] == "0.5.0"

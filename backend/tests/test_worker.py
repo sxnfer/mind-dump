@@ -1,7 +1,9 @@
 """The worker: chunks replaced in one transaction with "done" (D30), retries (D35), and
 raw landing and the text hash through the queue (D28).
 
-The website is httpx2's mock transport and the clock is fake: no network, no waiting.
+The website is httpx2's mock transport, the clock is fake and the embedder is a fake
+(D8): no network, no waiting. Since M3 every chunk here also gets a vector, so these
+stage 1 guarantees are proved with embeddings in place.
 """
 
 from collections.abc import Callable, Iterator
@@ -14,6 +16,7 @@ import pytest
 from psycopg.rows import DictRow
 
 from mind_dump import jobs
+from mind_dump.embeddings import FakeEmbedder
 from mind_dump.fetcher import MAX_BYTES, make_client
 from mind_dump.jobs import Job
 from mind_dump.storage import LocalStorage
@@ -87,7 +90,14 @@ def clock() -> FakeClock:
 @pytest.fixture
 def worker(conn: Conn, storage: LocalStorage, site: FakeSite, clock: FakeClock) -> Iterator[Worker]:
     with make_client(httpx2.MockTransport(site.handle)) as http:
-        yield Worker(conn=conn, storage=storage, http=http, clock=clock, lease=LEASE)
+        yield Worker(
+            conn=conn,
+            storage=storage,
+            http=http,
+            clock=clock,
+            lease=LEASE,
+            embedder=FakeEmbedder(),
+        )
 
 
 def save_link(conn: Conn) -> int:
@@ -110,9 +120,11 @@ def save_note(conn: Conn, body: str) -> int:
 
 
 def chunk_rows(conn: Conn, item_id: int) -> list[DictRow]:
+    """Every column that matters, vectors included (as text), so `==` compares it all."""
     return conn.execute(
         """
-        SELECT id, chunk_index, start_char, end_char, text, source_sha256, item_version_id
+        SELECT id, chunk_index, start_char, end_char, text, source_sha256, item_version_id,
+               page, embedding::text AS embedding, embedding_model
         FROM chunks WHERE item_id = %s ORDER BY chunk_index
         """,
         (item_id,),
@@ -220,6 +232,7 @@ def test_a_crash_before_commit_leaves_the_old_chunks_and_the_job_not_done(
 
     assert seen == [2]  # the dying transaction had replaced 4 chunks with 2...
     assert chunk_rows(conn, item_id) == before  # ...and none of it survived: same rows, same ids
+    assert all(r["embedding"] is not None for r in before)  # vectors included
     job = latest_job(conn, item_id)
     assert job["status"] == "running"  # not done: its lease will run out and it runs again
     assert job["finished_at"] is None
@@ -273,6 +286,7 @@ def test_fewer_chunks_leave_no_orphans(conn: Conn, worker: Worker) -> None:
     rows = chunk_rows(conn, item_id)
     assert [r["chunk_index"] for r in rows] == [0, 1, 2]
     assert all(r["text"].startswith("short") for r in rows)  # no stale "long" text left
+    assert all(r["embedding"] is not None for r in rows)  # each new chunk has its vector
     stale = conn.execute(
         "SELECT count(*) AS n FROM chunks WHERE item_id = %s AND chunk_index >= 3", (item_id,)
     ).fetchone()["n"]
@@ -474,8 +488,10 @@ def test_a_refetch_where_only_furniture_changed_keeps_the_chunk_rows(
     site.serve(page(html=article(banner="New cookie banner! Accept all?")))
     clock.advance(timedelta(days=1))
     jobs.enqueue(conn, item_id)
+    calls = worker.embedder.calls
     worker.run_once()
 
+    assert worker.embedder.calls == calls  # M3 done-when: no embedding call either
     assert latest_job(conn, item_id)["status"] == "done"
     assert len(landed_files(worker.storage, item_id)) == 2  # new bytes: a new file
     versions = conn.execute(
