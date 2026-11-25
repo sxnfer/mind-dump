@@ -20,10 +20,17 @@ struct IslandActivity: Equatable, Identifiable {
     var hold: Double? = IslandMotion.confirmationHold
 }
 
-/// What a drop on the island would save, shown while a drag carrying text is over it.
+/// What a drop on the island would save, shown while a drag is over it.
 struct DropTarget: Equatable {
-    var isLink: Bool
-    /// What will be saved, short: the link's host and path, or the note's first words.
+    enum Kind: Equatable {
+        case note, link, file
+        /// The drag is turned down; the words say why ("One file at a time").
+        case refused(String)
+    }
+
+    var kind: Kind
+    /// What will be saved, short: the link's host and path, the note's first words, or the
+    /// file's name.
     var detail: String
     /// Released, and the save is taking longer than a glance.
     var isSaving = false
@@ -37,7 +44,7 @@ enum IslandPresentation: Equatable {
     case idle                       // the bare notch
     case peek                       // pointer is over it
     case compact(IslandActivity)    // a status pill
-    case dropTarget(DropTarget)     // a drag carrying text is over it: the capsule is the target
+    case dropTarget(DropTarget)     // a drag is over it: the capsule is the target
     case open                       // the capsule: the box, and the answer card in Ask
 
     var isOpen: Bool { self == .open }
@@ -190,6 +197,10 @@ final class IslandModel {
     /// collapse: the capsule goes back up into the notch, and as it arrives the body opens
     /// out to the pill, which reads as the notch swallowing it and answering.
     func show(_ activity: IslandActivity) {
+        #if DEBUG
+        // What the pill says, so a debug script's log shows it (pills hold no user content).
+        print("[pill] \(activity.text)")
+        #endif
         if presentation.isDropTarget && !dropReleased {
             // A status for an earlier item while a drag is over the island. Changing shape
             // now would pull the target from under the drag; keep it for after.

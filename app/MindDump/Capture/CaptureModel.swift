@@ -93,16 +93,27 @@ final class CaptureModel {
     /// saved" for a link that is. Typed capture and drop-and-save both come through here.
     /// It throws only when nothing was saved, so the caller keeps the words.
     func store(_ kind: Kind, note: String) async throws {
+        switch kind {
+        case .empty:
+            return
+        case .link(let url):
+            try await announce(isLink: true) { [api] in try await api.saveLink(url) }
+        case .note:
+            try await announce(isLink: false) { [api] in try await api.saveNote(note) }
+        }
+    }
+
+    /// A dropped file: uploaded, then the same "Saved", live status and "Already saved"
+    /// as a note. The worker reads a PDF's text or describes an image ("Processing").
+    func storeFile(_ url: URL, name: String) async throws {
+        try await announce(isLink: false) { [api] in try await api.uploadFile(url, name: name) }
+    }
+
+    /// The part every save shares: run it, then tell the island.
+    private func announce(isLink: Bool, _ save: () async throws -> APIClient.Item) async throws {
         let item: APIClient.Item
         do {
-            switch kind {
-            case .empty:
-                return
-            case .link(let url):
-                item = try await api.saveLink(url)
-            case .note:
-                item = try await api.saveNote(note)
-            }
+            item = try await save()
         } catch APIClient.APIError.alreadySaved {
             island.show(
                 IslandActivity(
@@ -114,7 +125,7 @@ final class CaptureModel {
         }
         let id = "item-\(item.id)"
         island.show(IslandActivity(id: id, glyph: .check, text: "Saved"))
-        follow(item, activityID: id, isLink: kind != .note)
+        follow(item, activityID: id, isLink: isLink)
     }
 
     /// A drop that could not be saved: the next open puts its words in the box with the

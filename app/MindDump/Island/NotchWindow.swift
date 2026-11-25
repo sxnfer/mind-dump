@@ -25,7 +25,7 @@ final class NotchWindow: NSPanel {
 
     private(set) var screenFrame: NSRect = .zero
 
-    /// Takes text dragged onto the island (drop-and-save, `DropModel`).
+    /// Takes text or a file dragged onto the island (drop-and-save, `DropModel`).
     weak var dropReceiver: DropReceiving?
     private var hosting: (any DropHosting)?
 
@@ -113,10 +113,11 @@ final class NotchWindow: NSPanel {
     }
 }
 
-/// What a closed island accepts as a drop: plain text, and links from a browser. Files and
-/// images are not listed, so AppKit turns those away before we see them (most also carry
-/// text or a URL; `DropModel` refuses those itself).
-private let dropTypes: [NSPasteboard.PasteboardType] = [.string, .URL]
+/// What a closed island accepts as a drop: plain text, links from a browser, and files.
+/// Images that are not files are not listed, so AppKit turns those away before we see
+/// them (most also carry text or a URL; `DropModel` refuses those itself). Which files the
+/// island takes (one PDF, PNG or JPEG) is `DropModel`'s call, so it can say why not.
+private let dropTypes: [NSPasteboard.PasteboardType] = [.string, .URL, .fileURL]
 
 @MainActor
 private protocol DropHosting: AnyObject {

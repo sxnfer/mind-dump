@@ -18,7 +18,10 @@ struct APIClient: Sendable {
     enum APIError: LocalizedError, Equatable {
         case unreachable            // backend not running, or no answer within the timeout
         case rejected(String)       // 422: the API explains what is wrong with the input
-        case alreadySaved           // 409: this link is already saved (migration 003)
+        case alreadySaved           // 409: this link, or these exact file bytes, already saved
+        case tooLarge               // 413: a file over the backend's 25 MB limit
+        case unsupportedType        // 415: not a PDF, PNG or JPEG, judged by its first bytes
+        case unreadableFile         // the app could not read a file to upload (moved, no access)
         case unexpected(Int)        // any other status code
 
         var errorDescription: String? {
@@ -26,6 +29,9 @@ struct APIClient: Sendable {
             case .unreachable: "Backend isn't running. Start it with docker compose up."
             case .rejected(let reason): reason
             case .alreadySaved: "Already saved."
+            case .tooLarge: "Files can be at most 25 MB."
+            case .unsupportedType: "Only PDF, PNG and JPEG files can be saved."
+            case .unreadableFile: "Couldn't read the file."
             case .unexpected(let code): "The backend answered \(code)."
             }
         }
@@ -66,6 +72,65 @@ struct APIClient: Sendable {
         return item
     }
 
+    /// POST /items/upload: the file's raw bytes as the body, its name in a header (D34).
+    ///
+    /// The body is streamed from disk by URLSession, off the main thread, so a 20 MB file
+    /// is never held in memory whole and the island keeps animating. The backend decides
+    /// the type from the first bytes and dedupes by SHA-256 (409 for the same bytes).
+    func uploadFile(_ file: URL, name: String) async throws -> Item {
+        var request = URLRequest(url: baseURL.appending(path: "items/upload"))
+        request.httpMethod = "POST"
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.setValue(Self.contentDisposition(filename: name), forHTTPHeaderField: "Content-Disposition")
+        // Seconds without any progress, not for the whole upload.
+        request.timeoutInterval = 30
+
+        // A file dragged in from Finder is readable because the drag granted it (see
+        // `DropModel.payload(from:)`). If the URL is security-scoped as well, open the
+        // scope for exactly as long as the upload reads it.
+        let scoped = file.startAccessingSecurityScopedResource()
+        defer { if scoped { file.stopAccessingSecurityScopedResource() } }
+
+        let data: Data
+        let code: Int
+        do {
+            let (body, response) = try await URLSession.shared.upload(for: request, fromFile: file)
+            data = body
+            code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        } catch let error as URLError where error.code == .fileDoesNotExist || error.code == .noPermissionsToReadFile {
+            // Not the backend's fault: the file moved, or the sandbox would not let us read it.
+            throw APIError.unreadableFile
+        } catch {
+            throw APIError.unreachable
+        }
+        switch code {
+        case 201:
+            guard let item = try? JSONDecoder().decode(Item.self, from: data) else {
+                throw APIError.unexpected(code)
+            }
+            return item
+        case 409: throw APIError.alreadySaved
+        case 413: throw APIError.tooLarge
+        case 415: throw APIError.unsupportedType
+        case 422: throw APIError.rejected(Self.detailMessage(in: data) ?? "The backend rejected this file.")
+        default: throw APIError.unexpected(code)
+        }
+    }
+
+    /// `attachment; filename="report.pdf"`. A header value must be plain ASCII, so a name
+    /// with any other letter (or a quote) goes in the RFC 2231 form, `filename*=UTF-8''…`,
+    /// which the backend's parser reads (`uploads.safe_filename`).
+    static func contentDisposition(filename: String) -> String {
+        let plain = filename.unicodeScalars.allSatisfy { $0.isASCII && $0.value >= 0x20 && $0 != "\"" && $0 != "\\" }
+        if plain { return "attachment; filename=\"\(filename)\"" }
+        // RFC 5987's attr-char, near enough: ASCII letters, digits and a few marks.
+        let allowed = CharacterSet(
+            charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+        )
+        let encoded = filename.addingPercentEncoding(withAllowedCharacters: allowed) ?? "file"
+        return "attachment; filename*=UTF-8''\(encoded)"
+    }
+
     /// POST /items. Success is exactly 201 Created; everything else is an error.
     private func createItem(_ payload: [String: String]) async throws -> Item {
         var request = URLRequest(url: baseURL.appending(path: "items"))
@@ -97,6 +162,17 @@ struct APIClient: Sendable {
         } catch {
             throw APIError.unreachable
         }
+    }
+
+    /// An error's `detail` when it is a plain sentence (the upload route's own errors), or
+    /// the first validation message.
+    private static func detailMessage(in data: Data) -> String? {
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let detail = json["detail"] as? String
+        {
+            return detail
+        }
+        return firstValidationMessage(in: data)
     }
 
     /// FastAPI's 422 body: {"detail": [{"loc": [...], "msg": "..."}]}
