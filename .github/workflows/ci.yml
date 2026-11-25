@@ -51,6 +51,12 @@ jobs:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
 
+      # P4 (D40): uv.lock must match pyproject.toml. Without this, a PR that edits
+      # pyproject.toml but not the lockfile passes here (uv sync --frozen trusts the
+      # lockfile) and breaks the next `uv sync` on someone's Mac. Fix: run `uv lock`.
+      - name: Lockfile is current (uv lock --check)
+        run: uv lock --check
+
       # --frozen: fail if uv.lock is out of date instead of quietly changing it.
       - name: Install exact locked dependencies
         run: uv sync --frozen
@@ -60,6 +66,14 @@ jobs:
         run: uv run ruff check --output-format=github .
       - name: Format (ruff format --check)
         run: uv run ruff format --check .
+
+      # P4 (D40): a new install runs every migration on an empty database; an upgrade
+      # runs the command again. Its own database on the service, used by nothing else.
+      # Fails unless run 1 applies every file and run 2 applies none.
+      - name: Migrations from an empty database, run twice
+        env:
+          DATABASE_URL: postgresql://mind_dump:ci-only-password@localhost:5432/mind_dump_migrations
+        run: scripts/migrations_twice.sh
 
       - name: Tests (pytest, real Postgres)
         env:
