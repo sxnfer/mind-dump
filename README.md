@@ -21,7 +21,7 @@ docker compose up -d --wait api worker
 curl -i http://localhost:8000/health          # {"status":"ok"}
 open http://localhost:8000/docs               # generated API docs
 
-# 3. Mac app: the notch panel (green dot = backend alive, + = save)
+# 3. Mac app: the island at the notch. Move the pointer to the notch, click, type, Return.
 xcodebuild -project app/MindDump.xcodeproj -scheme MindDump -derivedDataPath app/build/dd build
 open app/build/dd/Build/Products/Debug/MindDump.app
 ```
@@ -154,6 +154,21 @@ Run `embed_missing` again after changing `EMBEDDING_MODEL` or `EMBEDDING_PROVIDE
 Right-click the panel to quit. The app is unsigned (see `docs/decisions/`), so build it from source.
 
 `docker compose down` stops everything and keeps your data (the database and the landed pages, in two volumes). `docker compose down -v` deletes the data too.
+
+## Develop the Mac app
+
+The app is one black "island" that hangs from the notch (`app/MindDump/Island/`). The window never moves; only the island's body changes size inside it, on springs.
+
+Debug builds carry three aids for judging motion, all in `app/MindDump/Support/Debug.swift`:
+
+```bash
+APP=app/build/dd/Build/Products/Debug/MindDump.app
+"$APP/Contents/MacOS/MindDump"                        # run from Terminal: prints frame timings
+MD_MOTION_SCALE=8 "$APP/Contents/MacOS/MindDump"      # everything eight times slower
+notifyutil -p io.github.sxnfer.MindDump.debug.open    # drive it from a shell: peek, open, close, saved, film, script
+```
+
+Each transition prints a line such as `[frames] open: 156 frames, median 8.33 ms (120 Hz), worst 8.33 ms, late 0`. A late frame is a dropped frame.
 
 ## Develop the backend
 

@@ -45,3 +45,11 @@ The panels float over every other app, including fullscreen apps, and open with 
 | Long-press, reduced motion | Gestures, and respect for the system setting | Built-in gestures and the system "Reduce motion" flag |
 
 Source: https://github.com/opencoredev/islandcn
+
+**What the source says (read on 2026-11-25).** The table above was written from islandcn's demo. Its code is more precise:
+
+- It uses no animation library. Every spring is given in SwiftUI's own terms (`response`, `dampingFraction`), fitted frame by frame to recordings of the iPhone's island. We use those numbers as they are (`app/MindDump/Island/IslandMotion.swift`).
+- Width, height and corner radius each have their own spring, and the corner starts about 20 ms after the height. That is why the shape seems to breathe instead of scaling like a box.
+- Most moves barely overshoot (about 1%). Only a pill appearing bounces visibly (about 8%).
+- A collapse first aims at the bare notch, then opens out to the pill. Content leaves fast and at once, and arrives late, with a blur.
+- It has no hover: a phone has no pointer. Our peek on hover is our own.
