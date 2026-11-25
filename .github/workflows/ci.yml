@@ -234,3 +234,55 @@ jobs:
             echo "Secret scan ($EVENT): range '${base:-none}..${head:-none}' not found, so full history, $(git rev-list --count --no-merges HEAD) non-merge commit(s)"
             "$RUNNER_TEMP/gitleaks" git . --redact --no-banner --verbose
           fi
+
+      # D40: dependencies in uv.lock against OSV, with uv's built-in `uv audit`
+      # (experimental in uv 0.13.7; --preview-features silences the warning). uv audit
+      # fails on ANY finding, so scripts/audit_gate.py reads its JSON and blocks only
+      # when a finding has a fixed version; the rest are printed, and the nightly scan
+      # fails on them. Accepted risk: add `--ignore <ID>` to the uv audit line below,
+      # with a comment line above it: date, who, reason.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.7"
+          enable-cache: false   # the audit reads uv.lock only; it installs nothing
+      - name: Dependency audit (uv audit, blocks when a fix exists)
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          status=0
+          uv audit --locked --preview-features audit-command,json-output --output-format json \
+            > "$RUNNER_TEMP/audit.json" || status=$?
+          echo "uv audit exit status: $status (0 clean, 1 findings, other: it could not run)"
+          if [ "$status" -gt 1 ]; then echo "::error::uv audit could not run"; exit "$status"; fi
+          python3 scripts/audit_gate.py "$RUNNER_TEMP/audit.json" --uv-exit "$status"
+
+      # D40: the image this commit builds, scanned with Grype (Anchore, Apache-2.0).
+      # Grype runs from its image pinned by digest, and reads a saved copy of our image
+      # (docker save), so it needs no access to the Docker daemon.
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image for the scan
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          load: true
+          push: false
+          tags: mind-dump-api:scan
+          cache-from: type=gha   # reuses the backend job's layers; this job writes none
+      # --only-fixed drops findings with no fix (not-fixed, wont-fix, unknown); --fail-on
+      # high then exits 2 on any high or critical finding left. Accepted risks: .grype.yaml.
+      - name: Image scan (Grype, blocks on high or critical with a fix)
+        env:
+          GRYPE_IMAGE: anchore/grype:v0.122.1@sha256:661583704a253c0448ed63998b5ea2cd9d5a76ee71eedc4aed439b8ce3e93a1c
+        run: |
+          set -euo pipefail
+          docker save mind-dump-api:scan -o "$RUNNER_TEMP/image.tar"
+          echo "Image scan: mind-dump-api:scan, image id $(docker image inspect --format '{{.Id}}' mind-dump-api:scan)"
+          status=0
+          docker run --rm -v "$RUNNER_TEMP:/scan" -v "$PWD/.grype.yaml:/config/grype.yaml:ro" \
+            "$GRYPE_IMAGE" docker-archive:/scan/image.tar -c /config/grype.yaml \
+            --only-fixed --fail-on high -o table -o json=/scan/grype.json || status=$?
+          jq -r '"Grype: \(.source.target.imageID), \(.distro.name) \(.distro.version); findings with a fix: \(.matches | length) ("
+            + ([.matches[].vulnerability.severity] | group_by(.) | map("\(.[0]) \(length)") | join(", ")) + ")"' \
+            "$RUNNER_TEMP/grype.json" || echo "::error::Grype wrote no report"
+          echo "grype exit status: $status (0 pass, 2 a high or critical finding has a fix)"
+          exit "$status"
