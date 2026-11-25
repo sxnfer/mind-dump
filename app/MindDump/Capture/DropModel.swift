@@ -1,23 +1,55 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// Drop-and-save: text dragged from any app onto the island is saved when you let go, with
-/// no click and no key press. The lowest-friction way in.
+/// Drop-and-save: text, or one file, dragged from any app onto the island is saved when
+/// you let go, with no click and no key press. The lowest-friction way in.
 ///
 /// Three plain methods carry the whole flow: `entered`, `exited`, `dropped`. Both callers
 /// use them: AppKit's drag destination (the extension at the bottom, a thin adapter) and
-/// the debug script (`drag`, `dragexit`, `drop`). So the script exercises everything except
-/// reading the drag pasteboard and AppKit's own calls.
+/// the debug script (`drag`, `dragfile`, `dragexit`, `drop`, `dropfile`). So the script
+/// exercises everything except reading the drag pasteboard and AppKit's own calls.
 ///
-/// The saving itself is `CaptureModel.store`, the same code as typed capture: the same
+/// The saving itself is `CaptureModel`'s, the same code as typed capture: the same
 /// "Saved" pill, the same live status, the same "Already saved".
 @MainActor
 final class DropModel {
-    /// What a release would save: the text, trimmed, and whether it is a note or a link.
-    struct Payload: Equatable {
-        let text: String
-        let kind: CaptureModel.Kind
+    /// What a release would save, or why it would not.
+    enum Payload: Equatable {
+        /// Text, trimmed, and whether it is a note or a link.
+        case text(String, CaptureModel.Kind)
+        /// One file the backend can take (judged by its name, type and size only).
+        case file(DroppedFile)
+        /// A drag the island turns down, with the reason it shows while the drag is over
+        /// it. A release is refused, so the drag flies back.
+        case refused(Refusal, name: String?)
     }
+
+    /// A file on disk, as far as the island looks at it while hovering: its place, name
+    /// and size. Its bytes are read only after a release, and only by the upload.
+    struct DroppedFile: Equatable {
+        let url: URL
+        let name: String
+        /// nil when the size could not be read; the backend's 413 is then the check.
+        let size: Int?
+    }
+
+    enum Refusal: Equatable {
+        case unsupportedType, tooLarge, empty, severalFiles
+
+        /// Shown in the drop target. Plain words, short enough for one line.
+        var message: String {
+            switch self {
+            case .unsupportedType: "Only PDF, PNG and JPEG files"
+            case .tooLarge: "Too big: 25 MB at most"
+            case .empty: "This file is empty"
+            case .severalFiles: "One file at a time"
+            }
+        }
+    }
+
+    /// The backend's own limit (`MAX_UPLOAD_BYTES` in `uploads.py`), checked here first so
+    /// a file that is too big is refused before a byte is sent.
+    static let maxFileBytes = 25 * 1024 * 1024
 
     private let panel: PanelModel
     private let island: IslandModel
@@ -30,8 +62,8 @@ final class DropModel {
     /// Real drags only: is this screen point on the island? (The pointer tracker's hot zone,
     /// which is generous while the target shows.)
     var zoneContains: ((NSPoint) -> Bool)?
-    /// Real drags only: a drag we already turned down (a file, an image), so the pasteboard
-    /// is not read again on every move.
+    /// Real drags only: a drag we already turned down with nothing to show (a file
+    /// promise, an image from a browser), so the pasteboard is not read again on every move.
     private var refusedDrag: Int?
 
     init(panel: PanelModel, island: IslandModel) {
@@ -43,19 +75,45 @@ final class DropModel {
     static func payload(text: String) -> Payload? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        return Payload(text: trimmed, kind: CaptureModel.webURL(in: trimmed).map(CaptureModel.Kind.link) ?? .note)
+        return .text(trimmed, CaptureModel.webURL(in: trimmed).map(CaptureModel.Kind.link) ?? .note)
+    }
+
+    /// The files a drag carries. One supported file is a payload; anything else is a
+    /// refusal with its reason. Only metadata is read here (type, size, is it a folder),
+    /// never the contents: this runs while the drag is still moving.
+    static func payload(files urls: [URL]) -> Payload? {
+        guard let url = urls.first else { return nil }
+        guard urls.count == 1 else { return .refused(.severalFiles, name: nil) }
+        // The file system hands names back decomposed ("e" + accent); save the form people
+        // type, so a search for "résumé" finds it.
+        let name = url.lastPathComponent.precomposedStringWithCanonicalMapping
+        let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .contentTypeKey, .fileSizeKey])
+        if values?.isDirectory == true { return .refused(.unsupportedType, name: name) }
+        // The system's idea of its type, or failing that its extension. The backend
+        // decides for certain from the first bytes (a 415 if the name lied).
+        let type = values?.contentType ?? UTType(filenameExtension: url.pathExtension)
+        guard let type, [UTType.pdf, .png, .jpeg].contains(where: { type.conforms(to: $0) }) else {
+            return .refused(.unsupportedType, name: name)
+        }
+        let size = values?.fileSize
+        if let size, size > maxFileBytes { return .refused(.tooLarge, name: name) }
+        if size == 0 { return .refused(.empty, name: name) }
+        return .file(DroppedFile(url: url, name: name, size: size))
     }
 
     // MARK: The flow
 
-    /// A drag arrived. Returns false when the island will not take it: nothing to save,
-    /// the capsule is open (its box takes drops its own way), or a drop is still saving.
+    /// A drag arrived. Returns true when a release would save it. A refusal still shows
+    /// the target, with its reason, and returns false. Nothing shows when there is
+    /// nothing to save, the capsule is open (its box takes drops its own way), or a drop
+    /// is still saving.
     @discardableResult
     func entered(_ payload: Payload?, watchButton: Bool = false) -> Bool {
         guard let payload, !isSaving, !island.presentation.isOpen else { return false }
         current = payload
         island.showDropTarget(Self.target(for: payload))
         if watchButton { startWatchdog() }
+        if case .refused = payload { return false }
         return true
     }
 
@@ -75,6 +133,10 @@ final class DropModel {
             exited()
             return false
         }
+        if case .refused = payload {
+            exited()
+            return false
+        }
         current = nil
         isSaving = true
         island.dropTargetReleased()
@@ -84,7 +146,8 @@ final class DropModel {
 
     private func save(_ payload: Payload) async {
         // Usually the backend answers in a few milliseconds and "Saved" is the next thing
-        // shown. If it is slow, say so instead of holding a target that looks unanswered.
+        // shown. If it is slow (a big file), say so instead of holding a target that looks
+        // unanswered.
         let slow = Task { [island] in
             try? await Task.sleep(for: IslandMotion.seconds(0.3))
             if !Task.isCancelled { island.dropTargetSaving() }
@@ -93,25 +156,59 @@ final class DropModel {
             slow.cancel()
             isSaving = false
         }
-        do {
-            try await capture.store(payload.kind, note: payload.text)
-        } catch {
-            // Nothing was saved. Open the capsule with the words in the box and the reason
-            // under them, so Return retries. Never a silent loss, never a false "Saved".
-            slow.cancel()
-            panel.openCapture(keeping: payload.text, error: error.localizedDescription)
+        switch payload {
+        case .text(let text, let kind):
+            do {
+                try await capture.store(kind, note: text)
+            } catch {
+                // Nothing was saved. Open the capsule with the words in the box and the
+                // reason under them, so Return retries. Never a silent loss, never a false
+                // "Saved".
+                slow.cancel()
+                panel.openCapture(keeping: text, error: error.localizedDescription)
+            }
+        case .file(let file):
+            do {
+                try await capture.storeFile(file.url, name: file.name)
+            } catch {
+                // Nothing was saved, and the file is still where it was, so nothing is lost.
+                // The capsule stays shut (a text box cannot hold a file); a warning pill
+                // says why, then folds away.
+                slow.cancel()
+                island.show(
+                    IslandActivity(id: "file-failed", glyph: .warning, text: Self.pillText(for: error), hold: 3)
+                )
+            }
+        case .refused:
+            return  // `dropped` never gets here
+        }
+    }
+
+    /// A failed upload in a few words (a pill holds about 22 characters).
+    private static func pillText(for error: Error) -> String {
+        switch error as? APIClient.APIError {
+        case .unreachable: "Backend isn't running"
+        case .tooLarge: "Too big: 25 MB at most"
+        case .unsupportedType: "Only PDF, PNG and JPEG"
+        case .rejected: "This file is empty"  // the upload's only 422
+        case .unreadableFile: "Couldn't read the file"
+        default: "Couldn't save the file"
         }
     }
 
     private static func target(for payload: Payload) -> DropTarget {
-        switch payload.kind {
-        case .link(let url):
+        switch payload {
+        case .text(_, .link(let url)):
             let path = url.path() == "/" ? "" : url.path()
-            return DropTarget(isLink: true, detail: (url.host() ?? url.absoluteString) + path)
-        case .note, .empty:
+            return DropTarget(kind: .link, detail: (url.host() ?? url.absoluteString) + path)
+        case .text(let text, _):
             // The first words, on one line.
-            let words = payload.text.split(whereSeparator: \.isWhitespace).prefix(24).joined(separator: " ")
-            return DropTarget(isLink: false, detail: words)
+            let words = text.split(whereSeparator: \.isWhitespace).prefix(24).joined(separator: " ")
+            return DropTarget(kind: .note, detail: words)
+        case .file(let file):
+            return DropTarget(kind: .file, detail: file.name)
+        case .refused(let refusal, let name):
+            return DropTarget(kind: .refused(refusal.message), detail: name ?? "")
         }
     }
 
@@ -155,11 +252,11 @@ protocol DropReceiving: AnyObject {
 extension DropModel: DropReceiving {
     func draggingEntered(_ info: NSDraggingInfo) -> NSDragOperation {
         guard isOnIsland(info), refusedDrag != info.draggingSequenceNumber else { return [] }
-        guard entered(Self.payload(from: info.draggingPasteboard), watchButton: true) else {
-            refusedDrag = info.draggingSequenceNumber
-            return []
-        }
-        return .copy
+        // A refusal shows its reason but answers "no operation", so a release flies back.
+        let taken = entered(Self.payload(from: info.draggingPasteboard), watchButton: true)
+        // Turned down with nothing shown: do not read the pasteboard again on every move.
+        if !taken, current == nil { refusedDrag = info.draggingSequenceNumber }
+        return taken ? .copy : []
     }
 
     func draggingUpdated(_ info: NSDraggingInfo) -> NSDragOperation {
@@ -169,7 +266,8 @@ extension DropModel: DropReceiving {
             exited()
             return []
         }
-        if current == nil { return draggingEntered(info) }
+        guard let current else { return draggingEntered(info) }
+        if case .refused = current { return [] }
         return .copy
     }
 
@@ -192,19 +290,25 @@ extension DropModel: DropReceiving {
         return zoneContains?(point) ?? false
     }
 
-    /// Text, or a link from a browser. Files and images are a later slice: refuse them,
-    /// even when they also carry a name or an address as text.
+    /// Files first: Finder puts a file's name or path on the drag as text too, and the
+    /// person meant the file. Then text, or a link from a browser. Images that are not
+    /// files (a browser's image drag, a file promise from Photos) are a later slice.
     static func payload(from pasteboard: NSPasteboard) -> Payload? {
+        // Reading the file URLs is what gives a sandboxed app access to a dragged file:
+        // the URL on a drag pasteboard carries a sandbox extension, which the system
+        // grants to this process when the URL is read here.
+        let files = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
+            as? [URL] ?? []
+        if !files.isEmpty { return payload(files: files) }
         let types = pasteboard.types ?? []
-        let isFileOrImage = types.contains { type in
-            type == .fileURL
-                || type.rawValue.contains("promised-file") || type.rawValue.contains("FilePromise")
+        let isPromiseOrImage = types.contains { type in
+            type.rawValue.contains("promised-file") || type.rawValue.contains("FilePromise")
                 || UTType(type.rawValue)?.conforms(to: .image) == true
         }
-        if isFileOrImage { return nil }
+        if isPromiseOrImage { return nil }
         // A link dragged from a browser carries the address as a URL (and its title as text).
         if let url = (pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL])?.first, !url.isFileURL,
-            let payload = payload(text: url.absoluteString), case .link = payload.kind
+            let payload = payload(text: url.absoluteString), case .text(_, .link) = payload
         {
             return payload
         }

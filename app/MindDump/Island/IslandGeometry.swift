@@ -55,8 +55,10 @@ struct IslandLayout: Equatable {
     static let maxCardHeight: CGFloat = 400
     /// The drop target is narrower: it holds one short line.
     static let dropWidth: CGFloat = 300
-    /// The widest a pill's wing may grow on either side of the notch.
-    static let maxWing: CGFloat = 132
+    /// The widest a pill's wing may grow on either side of the notch. Wide enough for a
+    /// file drop's warnings ("Only PDF, PNG and JPEG", "Backend isn't running"); every
+    /// shorter pill is as wide as its own words, so it is not changed by this.
+    static let maxWing: CGFloat = 170
 
     /// The see-through window everything is drawn in: room for the widest pill, the
     /// tallest card and their shadows.

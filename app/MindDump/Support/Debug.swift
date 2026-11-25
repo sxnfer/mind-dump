@@ -255,6 +255,9 @@ final class FilmRecorder {
 ///     dragexit                  it leaves without a release (`DropModel.exited`)
 ///     drop [Some text]          release it (`DropModel.dropped`); no text: the one over it
 ///                               (in drag and drop text, \n is a new line and \t a tab)
+///     dragfile <path>           a drag carrying this one file arrives (several paths,
+///                               separated by " | ", make a drag of several files)
+///     dropfile [<path>]         release a file drag; no path: the one over it
 ///     dragtypes                 list the views that take drags, and their types
 ///     boxsize                   the box's laid-out width against the width its text
 ///                               editor wraps at
@@ -355,6 +358,15 @@ final class DebugScript {
             let described = Self.describe(payload ?? drop?.current)
             let taken = drop?.dropped(payload) ?? false
             print("[script] drop: \(taken ? "saving " + described : "refused")")
+        case "dragfile":
+            let payload = Self.filePayload(rest)
+            let taken = drop?.entered(payload) ?? false
+            print("[script] dragfile: \(drop?.current == nil ? "refused, nothing shown" : (taken ? "target shows, " : "target refuses, ") + Self.describe(payload))")
+        case "dropfile":
+            let payload = rest.isEmpty ? nil : Self.filePayload(rest)
+            let described = Self.describe(payload ?? drop?.current)
+            let taken = drop?.dropped(payload) ?? false
+            print("[script] dropfile: \(taken ? "saving " + described : "refused, " + described)")
         case "dragtypes":
             dragTypes()
         case "boxsize":
@@ -367,11 +379,22 @@ final class DebugScript {
         text.replacingOccurrences(of: "\\n", with: "\n").replacingOccurrences(of: "\\t", with: "\t")
     }
 
-    /// Kind and length only: even a debug log does not hold what was dropped.
+    /// The same metadata-only check a real file drag makes (`DropModel.payload(files:)`).
+    private static func filePayload(_ paths: String) -> DropModel.Payload? {
+        let urls = paths.components(separatedBy: " | ").map { URL(fileURLWithPath: $0) }
+        return DropModel.payload(files: urls)
+    }
+
+    /// Kind and length only: even a debug log does not hold what was dropped. (A file's
+    /// name is shown: the test files are ours.)
     private static func describe(_ payload: DropModel.Payload?) -> String {
-        guard let payload else { return "nothing" }
-        let kind = if case .link = payload.kind { "link" } else { "note" }
-        return "\(kind), \(payload.text.count) characters"
+        switch payload {
+        case nil: "nothing"
+        case .text(let text, .link): "link, \(text.count) characters"
+        case .text(let text, _): "note, \(text.count) characters"
+        case .file(let file): "file \(file.name), \(file.size.map(String.init) ?? "unknown") bytes"
+        case .refused(let refusal, let name): "\"\(refusal.message)\" \(name ?? "")"
+        }
     }
 
     /// Which views in the window would take a drop, deepest last. Shows what a text drop on

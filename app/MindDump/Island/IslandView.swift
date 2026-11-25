@@ -146,7 +146,8 @@ struct IslandView: View {
                 // The drop target's rim: says "here" in the one accent colour.
                 .overlay {
                     CapsuleShape()
-                        .strokeBorder(CapsuleStyle.accent, lineWidth: 2)
+                        // A refused drag gets a quiet rim: "not here", without a colour.
+                        .strokeBorder(drop?.isRefused == true ? Color.white.opacity(0.3) : CapsuleStyle.accent, lineWidth: 2)
                         .opacity(drop == nil ? 0 : 1)
                         .animation(drop == nil ? motion.contentOut : motion.contentIn, value: drop == nil)
                         .allowsHitTesting(false)
@@ -199,8 +200,10 @@ struct IslandView: View {
                 )
                 ActivityGlyph(glyph: .check, tint: .white)
                 ActivityGlyph(glyph: .warning, tint: .white)
-                DropTargetContent(drop: DropTarget(isLink: true, detail: "rehearsal"))
-                DropTargetContent(drop: DropTarget(isLink: false, detail: "rehearsal", isSaving: true))
+                DropTargetContent(drop: DropTarget(kind: .link, detail: "rehearsal"))
+                DropTargetContent(drop: DropTarget(kind: .note, detail: "rehearsal", isSaving: true))
+                DropTargetContent(drop: DropTarget(kind: .file, detail: "rehearsal.pdf"))
+                DropTargetContent(drop: DropTarget(kind: .refused("rehearsal"), detail: "rehearsal.txt"))
             }
             .opacity(0)
             .allowsHitTesting(false)
@@ -359,34 +362,61 @@ private struct PeekContent: View {
 
 // MARK: - Drop target
 
-/// A drag carrying text is over the notch: the capsule says what a release will do, next
-/// to a filled accent circle. Laid out at the target's own width, never the stack's.
+/// A drag is over the notch: the capsule says what a release will do, next to a filled
+/// accent circle (or, for a drag it turns down, why not, next to a grey one). A file's name
+/// goes under the words. Laid out at the target's own width, never the stack's.
 private struct DropTargetContent: View {
     let drop: DropTarget
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "plus")
+            Image(systemName: drop.isRefused ? "nosign" : drop.kind == .file ? "doc" : "plus")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(width: 38, height: 38)
-                .background(Circle().fill(CapsuleStyle.accent))
-            Text(headline)
-                .font(.system(size: 15, weight: .semibold))
-                .lineLimit(1)
-                .contentTransition(.opacity)
+                .background(Circle().fill(drop.isRefused ? Color.white.opacity(CapsuleStyle.controlFill) : CapsuleStyle.accent))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(headline)
+                    .font(.system(size: drop.isRefused ? 14 : 15, weight: .semibold))
+                    .lineLimit(1)
+                    .contentTransition(.opacity)
+                if showsName {
+                    Text(drop.detail)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(CapsuleStyle.secondary))
+                        .lineLimit(1)
+                        // A long name keeps its start and its extension: "Quarterly re…2026.pdf".
+                        .truncationMode(.middle)
+                }
+            }
             Spacer(minLength: 0)
         }
         .padding(.leading, 8)
         .padding(.trailing, 20)
         .frame(width: IslandLayout.dropWidth, height: IslandLayout.capsuleHeight)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(headline): \(drop.detail)")
+        .accessibilityLabel(drop.detail.isEmpty ? headline : "\(headline): \(drop.detail)")
+    }
+
+    /// Files only: a note's or link's words stay in the accessibility label, as before.
+    private var showsName: Bool {
+        !drop.detail.isEmpty && (drop.kind == .file || drop.isRefused)
     }
 
     private var headline: String {
         if drop.isSaving { return "Saving…" }
-        return drop.isLink ? "Release to save link" : "Release to save note"
+        switch drop.kind {
+        case .link: return "Release to save link"
+        case .note: return "Release to save note"
+        case .file: return "Release to save file"
+        case .refused(let reason): return reason
+        }
+    }
+}
+
+extension DropTarget {
+    var isRefused: Bool {
+        if case .refused = kind { true } else { false }
     }
 }
 

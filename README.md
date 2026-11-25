@@ -157,7 +157,7 @@ Right-click the notch or the capsule to quit. The app is unsigned (see `docs/dec
 
 ## Develop the Mac app
 
-The app is a black "island" that hangs from the notch, and a Liquid Glass capsule that comes out from under it (`app/MindDump/Island/`, `app/MindDump/Panel/CapsuleView.swift`). The window never moves; only the two shapes change size inside it, on springs. The capsule has two modes, Capture and Ask (the round button or Tab flips them). Ask streams an answer with numbered sources from `POST /ask` (`app/MindDump/Ask/`), and the capsule grows into a card for it. Text dragged onto the notch is saved when you let go (`app/MindDump/Capture/DropModel.swift`).
+The app is a black "island" that hangs from the notch, and a Liquid Glass capsule that comes out from under it (`app/MindDump/Island/`, `app/MindDump/Panel/CapsuleView.swift`). The window never moves; only the two shapes change size inside it, on springs. The capsule has two modes, Capture and Ask (the round button or Tab flips them). Ask streams an answer with numbered sources from `POST /ask` (`app/MindDump/Ask/`), and the capsule grows into a card for it. Text, or one PDF, PNG or JPEG file, dragged onto the notch is saved when you let go (`app/MindDump/Capture/DropModel.swift`; a file goes to `POST /items/upload`).
 
 Debug builds carry these aids, mostly in `app/MindDump/Support/Debug.swift`:
 
@@ -176,7 +176,7 @@ Each transition prints a line such as `[frames] open: 156 frames, median 8.33 ms
 
 The canned answers pick a script from a word in the question: `long` (passes the card's height), `nothing` (not from your items), `fail` (an error mid-stream), `limit` (429), `key` (no Claude key); anything else gets a short answer with two sources.
 
-`script` plays `<app temp folder>/script.txt`, one step per line: `pointer notch|away`, `click` (the notch), `click away`, `click <control>` (`mode`, `send`, `new-question`, `source-1`, `open-1`, …), `type …`, `key return|escape|tab|cmd-n`, `scroll <points>`, `drag <text>`, `dragexit`, `drop`, `measure <name>`, `wait <s>`, `film`, `snap`, `backdrop white|dark|busy|off` (a window of ours behind the capsule) and `shot` (a still of the screen there, to see the glass), `boxsize`. The full list is at the top of `DebugScript` in `Debug.swift`.
+`script` plays `<app temp folder>/script.txt`, one step per line: `pointer notch|away`, `click` (the notch), `click away`, `click <control>` (`mode`, `send`, `new-question`, `source-1`, `open-1`, …), `type …`, `key return|escape|tab|cmd-n`, `scroll <points>`, `drag <text>`, `dragfile <path>`, `dragexit`, `drop`, `dropfile`, `measure <name>`, `wait <s>`, `film`, `snap`, `backdrop white|dark|busy|off` (a window of ours behind the capsule) and `shot` (a still of the screen there, to see the glass), `boxsize`. The full list is at the top of `DebugScript` in `Debug.swift`.
 
 ## Develop the backend
 
