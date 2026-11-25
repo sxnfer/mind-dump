@@ -44,5 +44,31 @@ A number is the rank of the first right chunk (top 10). miss: not in the top 10;
 
 ## Answers (M5)
 
-Pending: the answers eval needs a run with `ANTHROPIC_API_KEY` set
-(`uv run python -m mind_dump.eval_answers` from `backend/`). No number here is estimated.
+> Written by `python -m mind_dump.eval_answers`. Do not edit by hand: run it again.
+> Questions: `backend/eval/answers.json`.
+
+- Date: 2026-11-25 10:42 UTC
+- Commit: 9b69b44
+- Model: claude-opus-5-5; search: hybrid; 76 model calls, estimated cost $0.3885
+- Answerable questions passing every check: 7/10
+- All citations valid: 13/13
+- A citation points at the expected passage: 10/10
+- States the key facts: 10/10
+- Unanswerable questions answered as not grounded: 3/3
+- Cited passages that support their sentence (judge): 28/31
+
+| # | Pass | Valid | Expected passage | Facts | Supported | Question |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | yes | yes | yes | yes | 2/2 | What does a carbon credit's serial number encode? |
+| 2 | yes | yes | yes | yes | 3/3 | Once a company has retired a credit, can it transfer it to someone else? |
+| 3 | yes | yes | yes | yes | 3/3 | How many credits from project MD-2291 went to the buffer pool? |
+| 4 | no | yes | yes | yes | 1/2 | How many times can a renewable crediting period be renewed? |
+| 5 | yes | yes | yes | yes | 3/3 | What share of a forestry project's credits goes into the buffer pool? |
+| 6 | yes | yes | yes | yes | 5/5 | What does the registry do with the buffer pool when a protected forest burns? |
+| 7 | no | yes | yes | yes | 2/3 | How does a work queue notice that a worker crashed while holding a task? |
+| 8 | no | yes | yes | yes | 1/2 | What does alert DQ-117 mean? |
+| 9 | yes | yes | yes | yes | 6/6 | How does a type 2 slowly changing dimension keep a customer's old address? |
+| 10 | yes | yes | yes | yes | 2/2 | What share of the seedlings planted in the first year of project MD-2291 survived? |
+| 101 | yes | yes | - | - | - | What is the market price of one carbon credit in euros today? |
+| 102 | yes | yes | - | - | - | Which programming language is the Apache Kafka broker written in? |
+| 103 | yes | yes | - | - | - | Who is the chief executive of the Verra registry? |
