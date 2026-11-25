@@ -6,7 +6,7 @@ import psycopg
 import pytest
 
 from mind_dump.config import load_settings
-from mind_dump.migrate import discover, migrate
+from mind_dump.migrate import discover, main, migrate
 
 
 @pytest.fixture
@@ -29,6 +29,26 @@ def test_applies_in_order_and_only_once(scratch_db: str, tmp_path: Path) -> None
 
     assert migrate(scratch_db, tmp_path) == ["001", "002"]
     assert migrate(scratch_db, tmp_path) == []  # second run: nothing new
+
+
+def test_command_prints_a_summary_line_ci_can_check(
+    scratch_db: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """P4 (D40): CI runs the command twice on an empty database and reads this line.
+    The first run must say "applied N migration(s)" for all N files, the second "applied 0"."""
+    write(tmp_path, "001_create_t.sql", "CREATE TABLE t (a int);")
+    write(tmp_path, "002_add_b.sql", "ALTER TABLE t ADD COLUMN b int;")
+    monkeypatch.setenv("DATABASE_URL", scratch_db)
+    monkeypatch.setenv("MIGRATIONS_DIR", str(tmp_path))
+
+    with caplog.at_level("INFO", logger="mind_dump.migrate"):
+        assert main() == 0
+        assert main() == 0
+    summaries = [r.getMessage() for r in caplog.records if r.getMessage().startswith("applied ")]
+    assert summaries == ["applied 2 migration(s): 001, 002", "applied 0 migration(s)"]
 
 
 def test_failed_migration_leaves_no_trace(scratch_db: str, tmp_path: Path) -> None:
