@@ -410,7 +410,7 @@ class Worker:
             )
         if plan.vectors is None and plan.chunks:
             log.info(
-                "item %s: no embedder (%s), so %s chunk(s) saved without vectors; "
+                "item %s: %s, so %s chunk(s) saved without vectors; "
                 "set the key, then run python -m mind_dump.embed_missing",
                 item_id,
                 self.no_embedder,

@@ -43,7 +43,7 @@ Upload a PDF, PNG or JPEG (at most 25 MB) as the raw request body. The same byte
 curl -si --data-binary @file.pdf -H 'Content-Disposition: attachment; filename="file.pdf"' localhost:8000/items/upload
 curl -s localhost:8000/items/1                 # status: queued, processing, ready or error
 curl -s localhost:8000/items/1/text            # the file's text, with its pages
-curl -s localhost:8000/items/1/chunks          # passages with page numbers, and whether each has a vector
+curl -s localhost:8000/items/1/chunks          # passages (with chunk_id, as in search hits and citations), page numbers, and whether each has a vector
 ```
 
 ### Search
@@ -61,7 +61,8 @@ curl -s -X PUT localhost:8000/items/7/tags -H 'content-type: application/json' \
 ```
 
 - `mode`: `hybrid` (default), `keyword` or `vector`. The response's `mode` says what really ran.
-- Keywords: chunks with all your words come first, then chunks with any of them (words are stemmed, so "retries" finds "retry"). `"quotes"` for a phrase or `-word` to exclude switch to exact matching: every word must appear. `or` means either.
+- Keywords (`mode=keyword`): chunks with all your words come first, then chunks with any of them (words are stemmed, so "retries" finds "retry"). `"quotes"` for a phrase or `-word` to exclude switch to exact matching: every word must appear. `or` means either.
+- Hybrid: the meaning list does the loose matching, so the keyword list adds only exact evidence to the merge: chunks with every word you typed, then chunks holding a code or number you typed (`MD-2291`, `DQ-117`). A chunk sharing one ordinary word with your question gets no keyword boost (D37). If hybrid falls back to keywords, it uses the keyword rule above.
 - Filters: `type` (note, link, file), `from` and `to` (a date means the whole day, UTC, or a full time), `tag`, `item_id`. They narrow both lists before ranking, so a filter never hides a match.
 - Without the embedding key (`OPENAI_API_KEY`, or `VOYAGE_API_KEY` with `EMBEDDING_PROVIDER=voyage`), or when the embedding API is failing, hybrid returns keyword results with `"degraded": true` and a `notice`; `mode=vector` answers 503 with the reason. Both name the key to set.
 - Tags are normalised one way: trimmed, inner spaces squeezed to one, lowercased. So `?tag=carbon markets` finds an item tagged `Carbon  Markets`.

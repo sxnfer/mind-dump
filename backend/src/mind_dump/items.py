@@ -371,7 +371,7 @@ def list_chunks(item_id: int, conn: Conn) -> list[Chunk]:
         raise _not_found(item_id)
     rows = conn.execute(
         """
-        SELECT chunk_index AS index, start_char, end_char, text, page,
+        SELECT id AS chunk_id, chunk_index AS index, start_char, end_char, text, page,
                embedding IS NOT NULL AS embedded, embedding_model
         FROM chunks WHERE item_id = %s ORDER BY chunk_index
         """,

@@ -150,8 +150,13 @@ def test_after_the_worker_runs_the_item_is_ready_with_chunks(
 
     response = client.get(f"/items/{note['id']}/chunks")
     assert response.status_code == 200
+    # chunk_id is the row's id: the one search hits and citations carry.
+    chunk_id = worker.conn.execute(
+        "SELECT id FROM chunks WHERE item_id = %s", (note["id"],)
+    ).fetchone()["id"]
     assert response.json() == [
         {
+            "chunk_id": chunk_id,
             "index": 0,
             "start_char": 0,
             "end_char": 35,

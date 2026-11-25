@@ -5,9 +5,10 @@ Two lists, one merge:
     keyword_search   Postgres full-text search. The chunk's stored `text_tsv` (stemmed
                      'english' words, migration 010) is matched against the query parsed
                      by websearch_to_tsquery: chunks with all the words first, then
-                     chunks with any of them, each tier ranked by ts_rank. Quotes (a
-                     phrase) or a -word (exclude) switch to exact matching: all words
-                     only. GIN index.
+                     (keyword mode) chunks with any of them, or (hybrid mode) only
+                     chunks holding a typed code or number; each tier ranked by
+                     ts_rank. Quotes (a phrase) or a -word (exclude) switch to exact
+                     matching: all words only. GIN index.
     vector_search    pgvector: the cosine distance (<=>) between the query's vector and
                      each chunk's. HNSW index when there is no filter; an exact scan of
                      the filtered rows when there is one (see vector_search).
@@ -87,40 +88,60 @@ _FILTERS = """
         WHERE it.item_id = c.item_id AND t.name = %(tag)s::text))
 """
 
-# Words, in two tiers (D37). People type sentences, and one word missing from the passage
-# ("how MANY credits...") must not empty the list, so:
-#   1. chunks with ALL the query's words come first (websearch_to_tsquery as written);
-#   2. then chunks with ANY of them: the same tsquery with every AND (' & ') turned into
-#      OR (' | '). Only ' & ' with its spaces is replaced: a lexeme from a URL can hold a
-#      bare '&'. Phrases ('a' <-> 'b') and NOT (!'c') are left as they are.
-# Within a tier, ts_rank (word frequency) orders; not ts_rank_cd, whose cover density
-# rewards query words standing next to each other, which an any-word match rarely has.
-# A query with quotes or a -word is strict (decided in Python, is_strict): tier 1 only,
-# exactly websearch_to_tsquery. The filter sits in the same WHERE as the match, so ranking
-# and LIMIT only see rows that pass it; ties go to the older chunk, so the order is the
-# same every run. A query of only stop words or punctuation parses to an empty tsquery,
-# which matches nothing: an empty list, not an error. (Postgres sends a NOTICE for it;
-# psycopg drops notices when no handler is registered, so nothing reaches the logs.)
-# Everything stays one inline expression per use, so the planner can use the GIN index.
-KEYWORD_SQL = (
-    """
+# Words (D37). Each query becomes one of three forms; the first tier is always "every
+# word", and the form decides what may follow it:
+#   any     keyword mode (and hybrid falling back to keyword): people type sentences, and
+#           one word missing from the passage ("how MANY credits...") must not empty the
+#           list, so after the all-words tier come chunks with ANY of the words: the same
+#           tsquery with every AND (' & ') turned into OR (' | '). Only ' & ' with its
+#           spaces is replaced: a lexeme from a URL can hold a bare '&'. Phrases
+#           ('a' <-> 'b') and NOT (!'c') are left as they are.
+#   codes   hybrid mode: the vector list already measures loose similarity, so the
+#           keyword list adds only exact evidence. After the all-words tier come only the
+#           chunks holding a code or number the owner typed: the query's lexemes that
+#           contain a digit ('-2291' from "MD-2291", '0042', '2026'), OR-joined. A chunk
+#           sharing one ordinary word with the question ("offset", "tree") is NOT in the
+#           list: measured on real vectors (2026-11-25), such rows beat the right chunk
+#           that only the vector list had. No digit in the query: all words only.
+#   strict  a query with quotes or a -word (decided in Python, is_strict), in any mode:
+#           the all-words tier only, exactly websearch_to_tsquery, ranked by it too.
+# Within a tier, ts_rank (word frequency) orders, against that tier's own query (any:
+# the any-word query, as before); not ts_rank_cd, whose cover density rewards query
+# words standing next to each other, which a partial match rarely has. The filter sits
+# in the same WHERE as the match, so ranking and LIMIT only see rows that pass it; ties
+# go to the older chunk, so the order is the same every run. A query of only stop words
+# or punctuation parses to an empty tsquery, which matches nothing: an empty list, not an
+# error. (Postgres sends a NOTICE for it; psycopg drops notices when no handler is
+# registered, so nothing reaches the logs.) The form is a parameter, so Postgres plans
+# each search with only its own branch of the CASE; every match stays one inline
+# expression (the codes are an uncorrelated subquery, run once), so the GIN index serves it.
+_ALL = "websearch_to_tsquery('english', %(q)s)"
+_ANY = "replace(websearch_to_tsquery('english', %(q)s)::text, ' & ', ' | ')::tsquery"
+_CODES = """(SELECT coalesce(string_agg(quote_literal(l.lexeme), ' | '), '')::tsquery
+            FROM unnest(to_tsvector('english', %(q)s)) AS l
+            WHERE l.lexeme ~ '[0-9]')"""
+FORMS = ("any", "codes", "strict")
+_KEYWORD_HEAD = f"""
 SELECT c.id,
        ts_rank(c.text_tsv,
-               replace(websearch_to_tsquery('english', %(q)s)::text, ' & ', ' | ')::tsquery)
-           AS score
+               CASE %(form)s::text
+                   WHEN 'strict' THEN {_ALL}
+                   WHEN 'codes' THEN (CASE WHEN c.text_tsv @@ {_ALL} THEN {_ALL}
+                                           ELSE {_CODES} END)
+                   ELSE {_ANY}
+               END) AS score
 FROM chunks c JOIN items i ON i.id = c.item_id
-WHERE c.text_tsv @@ (CASE WHEN %(strict)s::boolean
-                          THEN websearch_to_tsquery('english', %(q)s)
-                          ELSE replace(websearch_to_tsquery('english', %(q)s)::text,
-                                       ' & ', ' | ')::tsquery
+WHERE c.text_tsv @@ (CASE %(form)s::text
+                         WHEN 'strict' THEN {_ALL}
+                         WHEN 'codes' THEN {_ALL} || {_CODES}
+                         ELSE {_ANY}
                      END)
-"""
-    + _FILTERS
-    + """
-ORDER BY (c.text_tsv @@ websearch_to_tsquery('english', %(q)s)) DESC, score DESC, c.id
+"""  # noqa: S608 (only constants are joined in)
+_KEYWORD_TAIL = f"""
+ORDER BY (c.text_tsv @@ {_ALL}) DESC, score DESC, c.id
 LIMIT %(n)s
 """
-)
+KEYWORD_SQL = _KEYWORD_HEAD + _FILTERS + _KEYWORD_TAIL
 
 # Meaning, no filter: the HNSW index walks to the nearest vectors. Only vectors from the
 # query's model are comparable (D8), and NULL vectors are not in the index at all.
@@ -172,7 +193,7 @@ class Ranked:
 
 
 # A double quote, or a word with a leading minus ("-fire", not "MD-2291"): the owner
-# asked for exact matching, so the any-word tier is off.
+# asked for exact matching, so only the all-words tier runs.
 _STRICT = re.compile(r'"|(?:^|\s)-\S')
 
 
@@ -180,8 +201,16 @@ def is_strict(query: str) -> bool:
     return _STRICT.search(query) is not None
 
 
-def keyword_params(query: str, filters: Filters, n: int) -> dict:
-    return {"q": query, "strict": is_strict(query), "n": n, **filters.params()}
+def keyword_form(query: str, hybrid: bool) -> str:
+    """strict for quotes or a -word; else codes when the list feeds a hybrid merge, any
+    when it is the whole answer (see KEYWORD_SQL)."""
+    if is_strict(query):
+        return "strict"
+    return "codes" if hybrid else "any"
+
+
+def keyword_params(query: str, filters: Filters, n: int, hybrid: bool = False) -> dict:
+    return {"q": query, "form": keyword_form(query, hybrid), "n": n, **filters.params()}
 
 
 def vector_params(vector: Vector, model: str, filters: Filters, n: int) -> dict:
@@ -192,8 +221,13 @@ def _ranked(rows: list[DictRow]) -> list[Ranked]:
     return [Ranked(r["id"], rank, float(r["score"])) for rank, r in enumerate(rows, 1)]
 
 
-def keyword_search(conn: Conn, query: str, filters: Filters, n: int) -> list[Ranked]:
-    return _ranked(conn.execute(KEYWORD_SQL, keyword_params(query, filters, n)).fetchall())
+def keyword_search(
+    conn: Conn, query: str, filters: Filters, n: int, hybrid: bool = False
+) -> list[Ranked]:
+    """hybrid=True: the list feeds the merge, so only exact evidence (all words, or a
+    typed code). False: the whole answer, so any word counts too."""
+    params = keyword_params(query, filters, n, hybrid)
+    return _ranked(conn.execute(KEYWORD_SQL, params).fetchall())
 
 
 def vector_search(conn: Conn, vector: Vector, model: str, filters: Filters, n: int) -> list[Ranked]:
@@ -267,7 +301,7 @@ class Hit:
     item_created_at: datetime
     score: float  # the RRF score over the lists this search used
     keyword_rank: int | None = None
-    keyword_score: float | None = None  # ts_rank against the any-word query
+    keyword_score: float | None = None  # ts_rank against the query of the chunk's tier
     vector_rank: int | None = None
     vector_distance: float | None = None  # cosine distance: 0 is the same direction
 
@@ -286,7 +320,7 @@ class SearchUnavailable(Exception):
     """Vector mode can't run: no embedding model is configured, or it failed."""
 
 
-NO_EMBEDDER = "Search by meaning needs an embedding model, and none is configured"
+NO_EMBEDDER = "no embedding model is configured"
 
 
 def _hits(conn: Conn, fused: list[Fused], keyword: list[Ranked], vector: list[Ranked]) -> list[Hit]:
@@ -341,8 +375,8 @@ def search(
     if mode in ("vector", "hybrid"):
         try:
             if embedder is None:
-                reason = f" ({no_embedder})" if no_embedder else ""
-                raise SearchUnavailable(NO_EMBEDDER + reason)
+                reason = no_embedder or NO_EMBEDDER
+                raise SearchUnavailable(f"Search by meaning is off because {reason}")
             try:
                 query_vector = embedder.embed_query(query)
             except (TemporaryError, PermanentError) as exc:
@@ -350,9 +384,15 @@ def search(
         except SearchUnavailable as exc:
             if mode == "vector":
                 raise
-            used, notice = "keyword", f"{exc}. Showing keyword results only."
+            used, notice = "keyword", f"{exc}, so these are keyword results only."
 
-    keyword = keyword_search(conn, query, filters, n) if used in ("keyword", "hybrid") else []
+    # Hybrid that really runs as hybrid feeds the merge exact evidence only; keyword mode,
+    # or hybrid fallen back to keyword, is the whole answer and takes any word too.
+    keyword = (
+        keyword_search(conn, query, filters, n, hybrid=used == "hybrid")
+        if used in ("keyword", "hybrid")
+        else []
+    )
     vector: list[Ranked] = []
     if query_vector is not None and embedder is not None:
         vector = vector_search(conn, query_vector, embedder.model, filters, n)

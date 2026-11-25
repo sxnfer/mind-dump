@@ -67,7 +67,7 @@ def no_embedder_reason(settings: Settings) -> str:
     """Why there is no embedder, naming the key to set: for messages to the owner."""
     return (
         f"{settings.embedding.key_setting} is not set "
-        f"(EMBEDDING_PROVIDER={settings.embedding_provider})"
+        f"for EMBEDDING_PROVIDER={settings.embedding_provider}"
     )
 
 

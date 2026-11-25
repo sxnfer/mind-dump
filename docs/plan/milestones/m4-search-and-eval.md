@@ -6,7 +6,7 @@
 **Decisions needed:** none left. (Approved: D37 hybrid search, D20 reranking: none for now.)
 **Status:** built on branch `m4-search`. Keyword numbers (recall@5 0.80) recorded in `docs/results.md`; the vector and hybrid numbers wait for a run with an embedding key (`OPENAI_API_KEY` by default).
 **Tasks:**
-- ✅ Keyword search (Postgres full-text) and vector search (pgvector with an HNSW index). *(Migration 010: generated `chunks.text_tsv` + GIN index, HNSW index on `chunks.embedding`. `search.py`: `websearch_to_tsquery`, all words first, then any word, ranked by `ts_rank` (quotes or `-word`: exact); cosine distance with the query embedded as `query` (D8).)*
+- ✅ Keyword search (Postgres full-text) and vector search (pgvector with an HNSW index). *(Migration 010: generated `chunks.text_tsv` + GIN index, HNSW index on `chunks.embedding`. `search.py`: `websearch_to_tsquery`, all words first, then any word in keyword mode, or only a typed code or number in hybrid mode, ranked by `ts_rank` (quotes or `-word`: exact); cosine distance (D8).)*
 - ✅ Merge the two result lists into one (hybrid search). *(Reciprocal Rank Fusion, `1 / (60 + rank)`, D37. Each hit shows its rank in each list and the merged score.)*
 - ✅ Filters: type, date range, tag, and `item_id` (for Discuss in M5). *(WHERE clauses on both lists before their LIMIT; an exact vector scan under any filter, so a filter never loses a match. Tags got a minimal API: `PUT /items/{id}/tags`, and items show their tags.)*
 - ✅ A golden set of 20 questions with the item and passage each one should find. *(`backend/eval/golden.json` over 12 original documents in `backend/eval/corpus/`: 6 that share words, 9 paraphrases, 5 with an exact code or number.)*

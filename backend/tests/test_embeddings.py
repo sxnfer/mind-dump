@@ -389,7 +389,7 @@ def test_embedding_model_setting_overrides_the_providers_default(
 
 def test_no_embedder_reason_names_the_configured_providers_key() -> None:
     base = Settings(database_url="x", migrations_dir=".")  # type: ignore[arg-type]
-    assert no_embedder_reason(base) == "OPENAI_API_KEY is not set (EMBEDDING_PROVIDER=openai)"
+    assert no_embedder_reason(base) == "OPENAI_API_KEY is not set for EMBEDDING_PROVIDER=openai"
     voyage_cfg = Settings(
         database_url="x",
         migrations_dir=".",  # type: ignore[arg-type]

@@ -36,7 +36,7 @@ from psycopg.rows import DictRow
 
 from mind_dump import search as search_mod
 from mind_dump.config import Settings
-from mind_dump.embeddings import Embedder, no_embedder_reason
+from mind_dump.embeddings import Embedder
 from mind_dump.errors import PermanentError
 from mind_dump.llm import LLM, ModelTurn, TurnRequest
 from mind_dump.tags import normalise_tag
@@ -270,6 +270,9 @@ def _search_filters(args: dict, ctx: Context) -> tuple[search_mod.Filters, str |
     )
 
 
+WORDS_ONLY = "Search by meaning is unavailable right now: these passages matched by words only."
+
+
 def tool_search(conn: Conn, args: dict, ctx: Context) -> tuple[dict, dict[int, dict]]:
     query = args.get("query")
     if not isinstance(query, str) or not query.strip():
@@ -277,15 +280,7 @@ def tool_search(conn: Conn, args: dict, ctx: Context) -> tuple[dict, dict[int, d
     if len(query) > MAX_QUERY:
         raise ToolError(f"query must be at most {MAX_QUERY} characters")
     filters, notice = _search_filters(args, ctx)
-    result = search_mod.search(
-        conn,
-        query.strip(),
-        "hybrid",
-        filters,
-        SEARCH_RESULTS,
-        ctx.embedder,
-        no_embedder_reason(ctx.settings),
-    )
+    result = search_mod.search(conn, query.strip(), "hybrid", filters, SEARCH_RESULTS, ctx.embedder)
     found = {h.chunk_id: snapshot(h) for h in result.hits}
     out: dict = {
         "results": [
@@ -300,7 +295,9 @@ def tool_search(conn: Conn, args: dict, ctx: Context) -> tuple[dict, dict[int, d
             for s in found.values()
         ]
     }
-    notes = [n for n in (notice, result.notice) if n]
+    # The API's notice names settings and providers for the owner; the model gets only
+    # what it needs to read the results. No setting, key or provider name reaches it.
+    notes = [n for n in (notice, WORDS_ONLY if result.degraded else None) if n]
     if not out["results"]:
         notes.append("No passages matched. Try other words.")
     if notes:
