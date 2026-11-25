@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var panel = PanelModel(capture: capture, ask: ask, island: island)
     private lazy var drop = DropModel(panel: panel, island: island)
     private var keys: Any?
+    /// Option-Shift-Space from any app (D23).
+    private let hotKey = GlobalHotKey()
     private var window: NotchWindow?
     private var pointer: PointerTracker?
     #if DEBUG
@@ -53,6 +55,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         island.onWillClose = { [weak self] in self?.ask.panelWillClose() }
         ask.reveal.linkView = window.contentView
         listenForPanelKeys()
+        hotKey.onPress = { [weak self] in self?.shortcutPressed() }
+        hotKey.register()
 
         #if DEBUG
         if let view = window.contentView { frames = FrameMonitor(view: view) }
@@ -61,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         script = DebugScript(window: window, island: island, pointer: pointer, film: film)
         script?.onMeasure = { [weak self] name in self?.frames?.begin(name) }
         script?.drop = drop
+        script?.onHotKey = { [weak self] edge in self?.hotKey.handle(edge) }
         DebugRemote.listen { [weak self] command in self?.debug(command) }
         // A whole answer stream is timed as one span, not line by line.
         ask.onStream = { [weak self] name in
@@ -89,6 +94,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         monitor.start()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        hotKey.unregister()
+    }
+
+    /// The global shortcut was pressed. The rule for what it does lives in the model;
+    /// this only adds what the window must do after a claim.
+    private func shortcutPressed() {
+        let result = island.shortcutPressed()
+        // A claim by click puts the caret at the end once the press is handled; with no
+        // press here, do it now, so typing adds to the kept words and Return retries.
+        if result == .claimed { caretToEnd() }
+        #if DEBUG
+        print("[hotkey] \(result.rawValue)")
+        fflush(stdout)
+        #endif
     }
 
     /// Where answers come from: the backend, or in debug builds with `MD_ASK_FIXTURE=1`,
@@ -204,6 +226,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "open": island.openByUser()
         case "keystate": logKey("state")
         case "resignkey": window?.resignKey()
+        case "hotkey":
+            // The same path as a real press, from just after the system's delivery.
+            print("[hotkey] debug press")
+            hotKey.handle(.pressed)
+            hotKey.handle(.released)
         case "close": island.close()
         case "saved": island.show(IslandActivity(id: "debug", glyph: .check, text: "Saved"))
         case "reading":

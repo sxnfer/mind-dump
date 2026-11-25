@@ -22,6 +22,7 @@ curl -i http://localhost:8000/health          # {"status":"ok"}
 open http://localhost:8000/docs               # generated API docs
 
 # 3. Mac app (macOS 26 or later): the island at the notch. Move the pointer to the notch, click, type, Return.
+#    Or press Option-Shift-Space in any app to open it with the keyboard ready; press again to close.
 xcodebuild -project app/MindDump.xcodeproj -scheme MindDump -derivedDataPath app/build/dd build
 open app/build/dd/Build/Products/Debug/MindDump.app
 ```
@@ -151,6 +152,8 @@ docker compose exec worker python -m mind_dump.embed_missing      # embed what w
 
 Run `embed_missing` again after changing `EMBEDDING_MODEL` or `EMBEDDING_PROVIDER`: vectors from two models can't be compared, so the chunks are embedded again in place. When keys are set, item text goes to OpenAI (or Voyage AI, if chosen), and images, questions and the passages the agent reads go to Anthropic.
 
+Option-Shift-Space opens the capsule from any app, ready to type, and closes it again. It needs no permission. If another app holds the same keys, the shortcut is off and the app logs `[hotkey] could not register`.
+
 Right-click the notch or the capsule to quit. The app is unsigned (see `docs/decisions/`), so build it from source.
 
 `docker compose down` stops everything and keeps your data (the database and the landed pages, in two volumes). `docker compose down -v` deletes the data too.
@@ -176,7 +179,7 @@ Each transition prints a line such as `[frames] open: 156 frames, median 8.33 ms
 
 The canned answers pick a script from a word in the question: `long` (passes the card's height), `nothing` (not from your items), `fail` (an error mid-stream), `limit` (429), `key` (no Claude key); anything else gets a short answer with two sources.
 
-`script` plays `<app temp folder>/script.txt`, one step per line: `pointer notch|away`, `click` (the notch), `click away`, `click <control>` (`mode`, `send`, `new-question`, `source-1`, `open-1`, …), `type …`, `key return|escape|tab|cmd-n`, `scroll <points>`, `drag <text>`, `dragfile <path>`, `dragexit`, `drop`, `dropfile`, `measure <name>`, `wait <s>`, `film`, `snap`, `backdrop white|dark|busy|off` (a window of ours behind the capsule) and `shot` (a still of the screen there, to see the glass), `boxsize`. The full list is at the top of `DebugScript` in `Debug.swift`.
+`script` plays `<app temp folder>/script.txt`, one step per line: `pointer notch|away`, `click` (the notch), `click away`, `click <control>` (`mode`, `send`, `new-question`, `source-1`, `open-1`, …), `type …`, `key return|escape|tab|cmd-n`, `scroll <points>`, `drag <text>`, `dragfile <path>`, `dragexit`, `drop`, `dropfile`, `measure <name>`, `wait <s>`, `film`, `snap`, `backdrop white|dark|busy|off` (a window of ours behind the capsule) and `shot` (a still of the screen there, to see the glass), `boxsize`, `keystate`, `resignkey`, `hotkey [down|up]` (the global shortcut, from just after the system delivers it), `quit`. The full list is at the top of `DebugScript` in `Debug.swift`.
 
 ## Develop the backend
 

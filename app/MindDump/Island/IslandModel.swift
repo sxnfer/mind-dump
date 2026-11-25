@@ -43,7 +43,7 @@ struct DropTarget: Equatable {
 /// capsule, and wrong when it opened by itself (a failed drop): then the user's typing,
 /// meant for their own app, would land in the box, and a Return would save it.
 enum OpenReason: String {
-    /// A click on the notch (and, later, the global shortcut): the keyboard comes along.
+    /// A click on the notch, or the global shortcut: the keyboard comes along.
     case user
     /// The app opened it (a drop that could not be saved): it waits, unfocused, until the
     /// user clicks it.
@@ -200,8 +200,35 @@ final class IslandModel {
         presentation.isOpen ? close() : openByUser()
     }
 
-    /// The user asked for the capsule (a click on the notch; the global shortcut will call
-    /// this too): it opens with the keyboard.
+    /// What a press of the global shortcut did.
+    enum ShortcutResult: String {
+        case opened, closed, claimed
+        case ignored = "ignored (drop target)"
+    }
+
+    /// The global shortcut (D23), pressed from any app. Like a click on the notch it toggles,
+    /// with two differences: a capsule that opened by itself and waits is claimed, not
+    /// closed (the user pressed the keys to reach those kept words); and while a drag is
+    /// over the island it does nothing, so a drop is never pulled from under the pointer.
+    @discardableResult
+    func shortcutPressed() -> ShortcutResult {
+        switch presentation {
+        case .dropTarget:
+            return .ignored
+        case .open where openedBy == .system:
+            claim()
+            return .claimed
+        case .open:
+            close()
+            return .closed
+        case .idle, .peek, .compact:
+            openByUser()
+            return .opened
+        }
+    }
+
+    /// The user asked for the capsule (a click on the notch, or the global shortcut): it
+    /// opens with the keyboard.
     func openByUser() {
         open(by: .user)
     }
@@ -215,7 +242,8 @@ final class IslandModel {
         go(.open, with: .open, name: reason == .user ? "open" : "open-waiting")
     }
 
-    /// The user clicked a capsule that opened by itself: from now on it is theirs, with the
+    /// The user clicked a capsule that opened by itself (or pressed the shortcut while it
+    /// waited): from now on it is theirs, with the
     /// keyboard, and closes by the normal rules.
     func claim() {
         guard presentation.isOpen, openedBy == .system else { return }

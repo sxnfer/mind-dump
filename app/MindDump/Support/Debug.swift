@@ -95,7 +95,7 @@ final class FrameMonitor: NSObject {
 enum DebugRemote {
     static let commands = [
         "peek", "unpeek", "open", "close", "saved", "reading", "ready", "failed", "film", "snap", "script",
-        "keystate", "resignkey",
+        "keystate", "resignkey", "hotkey",
     ]
     private static let prefix = "io.github.sxnfer.MindDump.debug."
 
@@ -290,6 +290,10 @@ final class FilmRecorder {
 ///     dropfile [<path>]         release a file drag; no path: the one over it
 ///     keystate                  print who holds the keyboard ([script] keystate: …)
 ///     resignkey                 the window loses the keyboard, as when another app takes it
+///     hotkey [down | up]        the global shortcut, from just after the system delivers
+///                               it (`GlobalHotKey.handle`): a press and release, or one edge
+///                               (two downs in a row are a held key repeating)
+///     quit                      quit the app, as the menu does
 ///     dragtypes                 list the views that take drags, and their types
 ///     boxsize                   the box's laid-out width against the width its text
 ///                               editor wraps at
@@ -311,6 +315,8 @@ final class DebugScript {
     var onMeasure: ((String) -> Void)?
     /// Drop-and-save, driven through the same methods a real drag calls.
     var drop: DropModel?
+    /// The global shortcut's press and release, as the system's event would hand them on.
+    var onHotKey: ((GlobalHotKey.Edge) -> Void)?
 
     init(window: NotchWindow, island: IslandModel, pointer: PointerTracker, film: FilmRecorder) {
         self.window = window
@@ -407,6 +413,16 @@ final class DebugScript {
             // switch does that (see `AppDelegate.listenForKeyboardLoss`).
             print("[script] resignkey")
             window.resignKey()
+        case "hotkey":
+            print("[script] hotkey \(rest.isEmpty ? "press" : rest)")
+            if rest != "up" { onHotKey?(.pressed) }
+            if rest != "down" { onHotKey?(.released) }
+        case "quit":
+            // The same quit as the menu's "Quit Mind Dump": the app delegate's
+            // `applicationWillTerminate` runs (it gives the hot key back).
+            print("[script] quit")
+            fflush(stdout)
+            NSApp.terminate(nil)
         case "dragtypes":
             dragTypes()
         case "boxsize":
