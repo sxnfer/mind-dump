@@ -145,7 +145,7 @@ erDiagram
 | `file_texts` primary key `(item_id)` | A file's text (`GET /items/{id}/text`) |
 | `item_tags` primary key `(item_id, tag_id)` | Tags of one item |
 | `item_tags_tag_id_idx` | Items with one tag (the search `tag` filter) |
-| `chunks_text_tsv_idx` (GIN on `text_tsv`) | Keyword search: `text_tsv @@ websearch_to_tsquery('english', q)` (D37) |
+| `chunks_text_tsv_idx` (GIN on `text_tsv`) | Keyword search: `text_tsv @@` the query from `websearch_to_tsquery('english', q)`, or its any-word form (every ` & ` turned into ` \| `) (D37) |
 | `chunks_embedding_hnsw_idx` (HNSW, `vector_cosine_ops`) | Vector search with no filter: the nearest chunks by cosine distance (`<=>`). Approximate; under a filter, search measures the filtered rows exactly instead, so a filter can't lose a match (D37). |
 
 Tags (M4): `PUT /items/{id}/tags` replaces an item's set. Names are normalised one way (trimmed, inner whitespace squeezed to one space, lowercased); unused tag rows stay as the owner's vocabulary.
