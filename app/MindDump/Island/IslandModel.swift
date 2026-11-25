@@ -70,6 +70,7 @@ final class IslandModel {
     /// First leg of a collapse: the body is aiming at the notch, not at the pill yet.
     private var isCollapsingToNotch = false
     private var lastTransition = ContinuousClock.now
+    private var lastContentChange = ContinuousClock.now - .seconds(10)
     /// A transition started so recently that its springs are still doing the work.
     private var isMidTransition: Bool {
         ContinuousClock.now - lastTransition < IslandMotion.seconds(0.3)
@@ -162,9 +163,22 @@ final class IslandModel {
         guard presentation.isPanel else { return }
         // Already open and settled: the content grew or shrank in place. While the panel
         // is still opening, keep its springs and only move the target.
-        if !isMidTransition { motion = reduceMotion ? .reduced : .resize }
+        if !isMidTransition { use(reduceMotion ? .reduced : .resize) }
         metrics = target(for: .panel)
-        if !isMidTransition { onTransition?("resize") }
+        // A resize that a named change (a mode switch) just caused is part of that change.
+        let named = ContinuousClock.now - lastContentChange < IslandMotion.seconds(0.3)
+        if !isMidTransition && !named { onTransition?("resize") }
+    }
+
+    /// The open panel's content is about to change in place (a mode switch, a new
+    /// answer, sources coming in). Content crosses over and the height follows on the
+    /// resize springs, not on whatever transition ran last.
+    func panelContentWillChange(_ name: String) {
+        guard presentation.isPanel else { return }
+        // While the panel is still opening, its own springs keep the shape.
+        if !isMidTransition { use(reduceMotion ? .reduced : .resize) }
+        lastContentChange = .now
+        onTransition?(name)
     }
 
     func compactWingsMeasured(leading: CGFloat, trailing: CGFloat) {
@@ -174,11 +188,17 @@ final class IslandModel {
         compactWings = wings
         guard case .compact = presentation, !isCollapsingToNotch else { return }
         // The words changed width ("Saved" to "Reading page"): follow, without a bounce.
-        if !isMidTransition { motion = reduceMotion ? .reduced : .settle }
+        if !isMidTransition { use(reduceMotion ? .reduced : .settle) }
         metrics = target(for: presentation)
     }
 
     // MARK: Choreography
+
+    /// Change springs only when they differ: every view that reads `motion` is redrawn
+    /// on a write, even of the same value, and a streaming answer resizes line by line.
+    private func use(_ next: IslandMotion) {
+        if motion != next { motion = next }
+    }
 
     private func target(for presentation: IslandPresentation) -> IslandMetrics {
         switch presentation {
