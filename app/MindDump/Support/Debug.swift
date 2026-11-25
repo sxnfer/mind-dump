@@ -227,6 +227,11 @@ final class FilmRecorder {
 ///     click mode-ask            press a named control (see `debugTarget`): mode-ask,
 ///                               mode-capture, new-question, source-1, open-1, …
 ///     scroll -120               scroll wheel over the answer (negative: towards the top)
+///     drag Some text            a drag carrying this text arrives (`DropModel.entered`)
+///     dragexit                  it leaves without a release (`DropModel.exited`)
+///     drop [Some text]          release it (`DropModel.dropped`); no text: the one over it
+///                               (in drag and drop text, \n is a new line and \t a tab)
+///     dragtypes                 list the views that take drags, and their types
 ///     measure typing            time the next 1.3 s under this name
 ///     wait 0.5                  seconds, in animation time
 ///     film | snap               start a reel / take one still
@@ -239,6 +244,8 @@ final class DebugScript {
     private var running: Task<Void, Never>?
     /// Starts the frame monitor by hand, for things that are not transitions (typing).
     var onMeasure: ((String) -> Void)?
+    /// Drop-and-save, driven through the same methods a real drag calls.
+    var drop: DropModel?
 
     init(window: NotchWindow, island: IslandModel, pointer: PointerTracker, film: FilmRecorder) {
         self.window = window
@@ -262,6 +269,8 @@ final class DebugScript {
             // Hand the pointer back to the real mouse. Without this the stand-in stays
             // where the script left it ("away"), and the island ignores the person.
             pointer.scriptedPointer = nil
+            // A scripted drag has no real button to end it: never leave its target up.
+            drop?.exited()
             print("[script] done")
             fflush(stdout)
         }
@@ -304,8 +313,52 @@ final class DebugScript {
         case "film": film.film()
         case "snap": film.snap()
         case "measure": onMeasure?(rest)
+        case "drag":
+            let payload = DropModel.payload(text: Self.unescape(rest))
+            let taken = drop?.entered(payload) ?? false
+            print("[script] drag: \(taken ? "target shows, " + Self.describe(payload) : "refused")")
+        case "dragexit":
+            drop?.exited()
+            print("[script] dragexit")
+        case "drop":
+            let payload = rest.isEmpty ? nil : DropModel.payload(text: Self.unescape(rest))
+            let described = Self.describe(payload ?? drop?.current)
+            let taken = drop?.dropped(payload) ?? false
+            print("[script] drop: \(taken ? "saving " + described : "refused")")
+        case "dragtypes":
+            dragTypes()
         default: print("[script] unknown: \(line)")
         }
+    }
+
+    private static func unescape(_ text: String) -> String {
+        text.replacingOccurrences(of: "\\n", with: "\n").replacingOccurrences(of: "\\t", with: "\t")
+    }
+
+    /// Kind and length only: even a debug log does not hold what was dropped.
+    private static func describe(_ payload: DropModel.Payload?) -> String {
+        guard let payload else { return "nothing" }
+        let kind = if case .link = payload.kind { "link" } else { "note" }
+        return "\(kind), \(payload.text.count) characters"
+    }
+
+    /// Which views in the window would take a drop, deepest last. Shows what a text drop on
+    /// the open panel does without making one.
+    private func dragTypes() {
+        func walk(_ view: NSView, depth: Int) {
+            let types = view.registeredDraggedTypes
+            if !types.isEmpty {
+                let frame = view.convert(view.bounds, to: nil)
+                let name = String(describing: type(of: view)).prefix(60)
+                print("[script] dragtypes: \(depth) \(name) \(Int(frame.width))x\(Int(frame.height)) at \(Int(frame.minX)),\(Int(frame.minY)) hidden \(view.isHiddenOrHasHiddenAncestor): \(types.map(\.rawValue).sorted().joined(separator: " "))")
+            }
+            view.subviews.forEach { walk($0, depth: depth + 1) }
+        }
+        if let content = window.contentView { walk(content, depth: 0) }
+        if let editor = window.firstResponder as? NSTextView {
+            print("[script] dragtypes: first responder \(type(of: editor)), field editor \(editor.isFieldEditor), editable \(editor.isEditable)")
+        }
+        fflush(stdout)
     }
 
     /// The centre of a named control, on screen (see `debugTarget`).

@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var capture = CaptureModel(api: api, island: island)
     private lazy var ask = AskModel(source: answerSource, island: island)
     private lazy var panel = PanelModel(capture: capture, ask: ask, island: island)
+    private lazy var drop = DropModel(panel: panel, island: island)
     private var keys: Any?
     private var window: NotchWindow?
     private var pointer: PointerTracker?
@@ -33,6 +34,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pointer.start()
         self.pointer = pointer
 
+        // Drop-and-save: text dragged onto the island. The target follows the island's
+        // hot zone, not the whole see-through window.
+        window.dropReceiver = drop
+        drop.zoneContains = { [weak pointer] point in pointer?.contains(point) ?? false }
+
         // An open panel takes the keyboard; anything else gives it back to your app.
         island.onPanelChange = { [weak window, weak self] open in
             guard let window else { return }
@@ -50,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.film = film
         script = DebugScript(window: window, island: island, pointer: pointer, film: film)
         script?.onMeasure = { [weak self] name in self?.frames?.begin(name) }
+        script?.drop = drop
         DebugRemote.listen { [weak self] command in self?.debug(command) }
         // A whole answer stream is timed as one span, not line by line.
         ask.onStream = { [weak self] name in

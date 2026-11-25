@@ -47,6 +47,15 @@ final class PanelModel {
         select(mode == .capture ? .ask : .capture)
     }
 
+    /// A drop that could not be saved: open in Capture with its words in the box and the
+    /// reason under them. The panel is closed here, so the mode changes without a slide.
+    func openCapture(keeping text: String, error: String) {
+        guard !island.presentation.isPanel else { return }
+        mode = .capture
+        capture.keepForRetry(text, error: error)
+        island.open()
+    }
+
     /// Built once at launch, out of sight, in Ask mode with a finished answer.
     static func rehearsal(island: IslandModel) -> PanelModel {
         let ask = AskModel(source: APIClient.local, island: island)
