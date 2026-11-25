@@ -1,6 +1,6 @@
 """Save, list, get and delete items (M1), read a link's page history (P1, D32),
-upload files (P2, D34), follow each item's processing (P3, D6), and read a file's
-extracted text (M3, D7b).
+upload files (P2, D34), follow each item's processing (P3, D6), read a file's
+extracted text (M3, D7b), and set an item's tags (M4).
 
 Plain SQL with server-side parameters. Queries are string literals, never f-strings,
 so no value can ever become part of the SQL text (ruff rule S608 enforces this).
@@ -17,7 +17,7 @@ from psycopg.rows import DictRow
 from psycopg_pool import ConnectionPool
 from starlette.concurrency import run_in_threadpool
 
-from mind_dump import jobs, pages
+from mind_dump import jobs, pages, tags
 from mind_dump.db import get_conn
 from mind_dump.models import (
     Chunk,
@@ -25,10 +25,12 @@ from mind_dump.models import (
     Item,
     ItemDetail,
     ItemPage,
+    ItemTags,
     Job,
     NewItem,
     NewLink,
     Page,
+    TagSet,
     Version,
 )
 from mind_dump.storage import Storage
@@ -245,7 +247,11 @@ def list_items(
         """
         SELECT i.id, i.type, i.title, i.url, i.body, i.created_at,
                i.sha256, i.media_type, i.size_bytes, i.filename,
-               j.status AS job_status, j.error AS job_error
+               j.status AS job_status, j.error AS job_error,
+               ARRAY(
+                   SELECT t.name FROM item_tags it JOIN tags t ON t.id = it.tag_id
+                   WHERE it.item_id = i.id ORDER BY t.name
+               ) AS tags
         FROM items i
         LEFT JOIN LATERAL (
             SELECT status, error FROM jobs WHERE item_id = i.id ORDER BY id DESC LIMIT 1
@@ -295,7 +301,11 @@ def get_item(
         """
         SELECT i.id, i.type, i.title, i.url, i.body, i.created_at,
                i.sha256, i.media_type, i.size_bytes, i.filename,
-               j.status AS job_status, j.error AS job_error
+               j.status AS job_status, j.error AS job_error,
+               ARRAY(
+                   SELECT t.name FROM item_tags it JOIN tags t ON t.id = it.tag_id
+                   WHERE it.item_id = i.id ORDER BY t.name
+               ) AS tags
         FROM items i
         LEFT JOIN LATERAL (
             SELECT status, error FROM jobs WHERE item_id = i.id ORDER BY id DESC LIMIT 1
@@ -419,9 +429,32 @@ def get_file_text(item_id: int, conn: Conn) -> FileText:
     )
 
 
+@router.put(
+    "/{item_id}/tags",
+    response_model=ItemTags,
+    summary="Replace an item's tags ([] clears them)",
+    responses={
+        404: {"description": "No such item"},
+        422: {"description": "An empty tag, a tag over 50 characters, or over 20 tags"},
+    },
+)
+def put_tags(item_id: int, new: TagSet, conn: Conn) -> ItemTags:
+    """The body is the whole new set: tags not in it are removed from the item. Each tag
+    is trimmed, its inner spaces squeezed to one and lowercased, so "Carbon  Markets" and
+    "carbon markets" are one tag. Search filters with the same rule (?tag=)."""
+    try:
+        names = tags.normalise_tags(new.tags)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from None
+    saved = tags.set_tags(conn, item_id, names)
+    if saved is None:
+        raise _not_found(item_id)
+    return ItemTags(item_id=item_id, tags=saved)
+
+
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_item(item_id: int, conn: Conn, storage: StorageDep) -> Response:
-    # Rows first (fetches, versions, jobs, chunks and a file's text go with the item,
+    # Rows first (fetches, versions, jobs, chunks, tag links and a file's text go with the item,
     # ON DELETE CASCADE), then files.
     # In that order a failure can only leave unused files, never rows pointing at nothing.
     deleted = conn.execute(

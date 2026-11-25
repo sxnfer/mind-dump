@@ -16,7 +16,7 @@ flowchart LR
     W -- fetch --> WEB["The web<br/>pages behind links"]
     W -- "land raw page (D28)" --> FS
     W -- "embed chunks (Voyage, D8)<br/>describe images (Claude, D7b)" --> M["Model APIs<br/>Voyage: embeddings<br/>Claude: descriptions, answers"]
-    API -- "agent asks" --> M
+    API -- "embed search query (D37)<br/>agent asks" --> M
 ```
 
 Platform under every box (the DevOps half): Docker, CI/CD, Terraform, secrets, logs, metrics and alerts.

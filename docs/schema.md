@@ -2,7 +2,7 @@
 
 > The source of truth is `backend/migrations/`. Update this diagram in the same PR as any new migration.
 
-As of migration 009 (M3):
+As of migration 010 (M4):
 
 ```mermaid
 erDiagram
@@ -74,6 +74,7 @@ erDiagram
         integer     page "PDFs only: 1-based; null otherwise"
         vector      embedding "vector(1024); null until embedded (D8)"
         text        embedding_model "the model that made embedding"
+        tsvector    text_tsv "generated from text: english words, stemmed (D37)"
         timestamptz created_at
     }
     file_texts {
@@ -126,6 +127,7 @@ erDiagram
 | One `file_texts` row per file item; its page arrays are both null or the same length | Chunks point into one text. It is written in the same transaction as the chunks (D30), and rebuilt from the stored file when asked. |
 | Deleting an item deletes its `file_texts` | `ON DELETE CASCADE`; the API then deletes the stored file. |
 | `tags.name` is unique | One row per tag name; items share it. |
+| `chunks.text_tsv` is `GENERATED ALWAYS AS (to_tsvector('english', text)) STORED` | Postgres recomputes it whenever `text` changes, so the words search matches can never disagree with the chunk (D37). |
 
 ## Indexes
 
@@ -142,9 +144,11 @@ erDiagram
 | `chunks_item_index_key` `(item_id, chunk_index)` | An item's chunks in order (`GET /items/{id}/chunks`) |
 | `file_texts` primary key `(item_id)` | A file's text (`GET /items/{id}/text`) |
 | `item_tags` primary key `(item_id, tag_id)` | Tags of one item |
-| `item_tags_tag_id_idx` | Items with one tag |
+| `item_tags_tag_id_idx` | Items with one tag (the search `tag` filter) |
+| `chunks_text_tsv_idx` (GIN on `text_tsv`) | Keyword search: `text_tsv @@` the query from `websearch_to_tsquery('english', q)`, or its any-word form (every ` & ` turned into ` \| `) (D37) |
+| `chunks_embedding_hnsw_idx` (HNSW, `vector_cosine_ops`) | Vector search with no filter: the nearest chunks by cosine distance (`<=>`). Approximate; under a filter, search measures the filtered rows exactly instead, so a filter can't lose a match (D37). |
 
-No vector index yet: search (M4) adds an HNSW index on `chunks.embedding` with the queries that use it.
+Tags (M4): `PUT /items/{id}/tags` replaces an item's set. Names are normalised one way (trimmed, inner whitespace squeezed to one space, lowercased); unused tag rows stay as the owner's vocabulary.
 
 `schema_migrations` is created by the migration runner (`mind_dump.migrate`), not by a migration file.
 

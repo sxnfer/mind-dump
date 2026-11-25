@@ -5,9 +5,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from mind_dump import items
+from mind_dump import items, search_api
 from mind_dump.config import load_settings
 from mind_dump.db import create_pool
+from mind_dump.embeddings import create_embedder
 from mind_dump.storage import create_storage
 
 
@@ -20,6 +21,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     settings = load_settings()
     app.state.storage = create_storage(settings)  # D5: where raw pages live
+    # D8, D37: embeds search queries. None without VOYAGE_API_KEY: search falls back to
+    # keyword results (hybrid) or answers 503 (vector).
+    app.state.embedder = create_embedder(settings)
     pool = create_pool(settings)
     pool.open(wait=True, timeout=10)
     app.state.pool = pool
@@ -29,8 +33,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pool.close()
 
 
-app = FastAPI(title="Mind Dump API", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="Mind Dump API", version="0.6.0", lifespan=lifespan)
 app.include_router(items.router)
+app.include_router(search_api.router)
 
 
 @app.get("/health", tags=["ops"])
