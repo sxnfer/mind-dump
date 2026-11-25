@@ -75,7 +75,7 @@ struct CapsuleView: View {
     /// stay level with its first line.
     ///
     /// The box has one width, always: the line less the mode button, the end slot and
-    /// two 12-point gaps (324 points). Its text editor kept wrapping at an old width when
+    /// two 12-point gaps (398 points). Its text editor kept wrapping at an old width when
     /// the box changed width under it (measured: a 324-point box whose text still wrapped
     /// at 267), which made text wrap early. So nothing that changes (the mode, Capture's
     /// words) changes the box's width.
@@ -94,8 +94,12 @@ struct CapsuleView: View {
         .frame(minHeight: IslandLayout.capsuleHeight)
     }
 
-    /// 440 less 8 + 8 padding, the 38-point button, the 38-point slot and two 12s.
-    private static let boxWidth: CGFloat = IslandLayout.capsuleWidth - 16 - 38 - 38 - 24
+    /// The capsule less 8 + 8 padding, the 38-point button, the end slot and two 12s.
+    private static let boxWidth: CGFloat = IslandLayout.capsuleWidth - 16 - 38 - endSlotWidth - 24
+
+    /// Room for Ask's 38-point send button, or for Capture's key cap with the note or
+    /// link glyph beside it.
+    private static let endSlotWidth: CGFloat = 44
 
     private var text: Binding<String> {
         switch panel.mode {
@@ -147,13 +151,14 @@ struct CapsuleView: View {
             .accessibilityLabel(panel.mode == .capture ? "Note or link" : "Question")
     }
 
-    /// The slot at the end of the line: Capture's ⏎ key cap, or Ask's send button. Both
-    /// are always built and only one shows: inserting the other on a mode flip cost a
-    /// late frame.
+    /// The slot at the end of the line: Capture's ⏎ key cap (with the note or link glyph
+    /// once the words have given way), or Ask's send button. Both are always built and
+    /// only one shows: inserting the other on a mode flip cost a late frame.
     private var endSlot: some View {
-        ZStack {
-            CaptureKey(capture: capture)
+        ZStack(alignment: .topTrailing) {
+            CaptureKey(capture: capture, showsGlyph: wordsGiveWay)
                 .padding(.top, 17)
+                .padding(.trailing, 2)
                 .frame(maxHeight: .infinity, alignment: .top)
                 .modifier(Shown(shown: panel.mode == .capture))
             SendButton(ask: ask, action: submit)
@@ -161,13 +166,13 @@ struct CapsuleView: View {
                 .frame(maxHeight: .infinity, alignment: .top)
                 .modifier(Shown(shown: panel.mode == .ask))
         }
-        .frame(width: 38)
+        .frame(width: Self.endSlotWidth, alignment: .trailing)
     }
 
-    /// "Save note", or "Save link" and the host: shown while the text leaves room for
-    /// them, faded out once it comes near, so the text runs on to the key cap before it
-    /// wraps. (They used to take 60 to 200 points of the line, and the text wrapped with
-    /// that room still showing as words beside it.)
+    /// "Save note" or "Save link": shown while the text leaves room for them, faded out
+    /// once it comes near, so the text runs on towards the key cap before it wraps. Then
+    /// a small note or link glyph beside the key cap says which it is, so there is always
+    /// a sign while there is text.
     private var captureWords: some View {
         let shown = panel.mode == .capture && !wordsGiveWay
         return CaptureWords(capture: capture)

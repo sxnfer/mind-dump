@@ -71,8 +71,32 @@ final class IslandModel {
         }
     }
 
-    /// The capsule's content height, measured by the view once it has laid out.
+    /// The capsule's content height, measured by the view once it has laid out (rounded
+    /// up to a step while an answer streams).
     private(set) var capsuleContentHeight: CGFloat = IslandLayout.capsuleHeight
+    private var measuredContentHeight: CGFloat = IslandLayout.capsuleHeight
+
+    /// True while an answer streams: the card grows in steps of a few lines, not on every
+    /// new line, then fits its content exactly once the answer is complete.
+    ///
+    /// Why: the glass shape resizing on its spring for each new line was the cost of a
+    /// streaming answer. Measured on the same long canned answer, in late frames per
+    /// second: every line 2.37 and 2.48; in 60-point steps 1.68 and 1.62; the slice 3
+    /// black panel at the same time 1.86 and 2.44. (A solid capsule with no glass at all
+    /// was 2.55 and 2.99, and taking out the mask 2.19 and 1.92: the glass was not it.)
+    /// The text pours exactly as before; only the card's edge runs a little ahead of it.
+    var growsInSteps = false {
+        didSet {
+            // Back to an exact fit. On the next turn of the main queue, so the content
+            // that ended the stream (the sources, a notice, an error) is measured first
+            // and the card makes one move, not a shrink and then a grow.
+            guard oldValue, !growsInSteps else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.growsInSteps else { return }
+                self.capsuleContentMeasured(self.measuredContentHeight)
+            }
+        }
+    }
     /// Wing widths the current pill needs, measured by the view.
     private var compactWings = CGSize(width: 44, height: 44)
 
@@ -259,7 +283,12 @@ final class IslandModel {
 
     // MARK: Measurements from the view
 
-    func capsuleContentMeasured(_ height: CGFloat) {
+    func capsuleContentMeasured(_ measured: CGFloat) {
+        measuredContentHeight = measured
+        // While an answer streams, the card grows a few lines at a time (see
+        // `growsInSteps`); otherwise it fits its content exactly.
+        let step = IslandMotion.answerGrowthStep
+        let height = growsInSteps && measured > 2 * step ? (measured / step).rounded(.up) * step : measured
         guard abs(height - capsuleContentHeight) > 0.5 else { return }
         capsuleContentHeight = height
         guard presentation.isOpen else { return }

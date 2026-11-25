@@ -127,6 +127,7 @@ final class AskModel {
             reveal.reset()
         }
         sourcesHaveEntered = false
+        island.growsInSteps = true
         onStream?("stream")
         task = Task { [weak self, source] in
             do {
@@ -167,6 +168,7 @@ final class AskModel {
         }
         lastTurn = nil
         focusRequests += 1
+        island.growsInSteps = false
         onStream?(nil)
     }
 
@@ -265,10 +267,12 @@ final class AskModel {
         // on their own, and the body follows the new height on its spring.
         sources = answer.grounded ? Self.numbered(answer.citations, by: reveal.references) : []
         phase = .done
+        island.growsInSteps = false
     }
 
     private func fail(_ error: Error) {
         task = nil
+        island.growsInSteps = false
         onStream?(nil)
         let message = error.localizedDescription
         island.capsuleContentWillChange("ask-error")
@@ -289,6 +293,7 @@ final class AskModel {
     }
 
     private func restoreLastTurn() {
+        island.growsInSteps = false
         status = nil
         partialFailed = false
         turnID += 1

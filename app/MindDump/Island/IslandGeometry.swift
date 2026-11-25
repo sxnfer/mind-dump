@@ -41,8 +41,10 @@ struct IslandLayout: Equatable {
 
     static let fallback = IslandLayout(notch: CGSize(width: 180, height: 32), hasNotch: false)
 
-    /// The capsule: wide enough for a sentence, narrow enough to stay "at the notch".
-    static let capsuleWidth: CGFloat = 440
+    /// The capsule: wide enough for a one-sentence question (about 50 characters at 16
+    /// points) on one line, narrow enough to stay "at the notch". At 440 a 47-character
+    /// question wrapped; the old black panel was 468 with a 432-point box.
+    static let capsuleWidth: CGFloat = 520
     /// One line: the round buttons (38) with 8 points around them.
     static let capsuleHeight: CGFloat = 54
     /// Space between the bottom of the notch and the top of the capsule.

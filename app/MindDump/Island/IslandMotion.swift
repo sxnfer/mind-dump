@@ -180,6 +180,9 @@ extension IslandMotion {
 
     /// When a collapse stops aiming at the notch and aims at the pill.
     static let collapseRetarget = 0.311
+    /// While an answer streams, the card grows in steps of this many points (about three
+    /// lines of the answer), not line by line (see `IslandModel.growsInSteps`).
+    static let answerGrowthStep: CGFloat = 60
     /// How long a "Saved" or "Ready" pill stays before it folds away.
     static let confirmationHold = 1.25
     /// How long the pointer may be away before a peek settles back (stops flapping at the edge).

@@ -1,32 +1,23 @@
 import SwiftUI
 
-/// Capture's words at the end of the line (see `CapsuleView`): "Save note", or "Save
-/// link" and the link's host. Nothing while the box is empty. They float over the empty
-/// end of the box and fade out once the text comes near them, so they never cost the
-/// text its room.
+/// Capture's words at the end of the line (see `CapsuleView`): "Save note" or "Save
+/// link" (the address is already in the box). Nothing while the box is empty. They float
+/// over the empty end of the box and fade out once the text comes near them, so they
+/// never cost the text its room.
 struct CaptureWords: View {
     let capture: CaptureModel
 
     var body: some View {
-        HStack(spacing: 5) {
+        Group {
             switch capture.kind {
-            case .empty:
-                EmptyView()
-            case .note:
-                Text("Save note")
-            case .link(let url):
-                Text("Save link")
-                Text(url.host() ?? url.absoluteString)
-                    .foregroundStyle(.white.opacity(0.9))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: 130, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+            case .empty: EmptyView()
+            case .note: Text("Save note")
+            case .link: Text("Save link")
             }
         }
         .font(.system(size: 12))
         .foregroundStyle(.white.opacity(CapsuleStyle.secondary))
-        .fixedSize(horizontal: true, vertical: false)
+        .fixedSize()
         .frame(height: 20)
         .contentTransition(.opacity)
         .animation(.easeOut(duration: 0.15), value: capture.kind)
@@ -34,18 +25,33 @@ struct CaptureWords: View {
     }
 }
 
-/// Capture's ⏎ key cap, in the slot at the end of the line: Return saves. It says what
-/// Return saves to VoiceOver, even while the words are hidden.
+/// Capture's ⏎ key cap, in the slot at the end of the line: Return saves. With
+/// `showsGlyph` (the words have given way to the text) a note or link glyph sits beside
+/// it, so the line always says which it is. It says the whole thing to VoiceOver.
 struct CaptureKey: View {
     let capture: CaptureModel
+    var showsGlyph = false
 
     var body: some View {
-        KeyCap()
-            .opacity(capture.kind == .empty ? 0 : 1)
-            .animation(.easeOut(duration: 0.15), value: capture.kind == .empty)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(accessibilityText)
-            .accessibilityHidden(capture.kind == .empty)
+        HStack(spacing: 4) {
+            Image(systemName: glyph)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(CapsuleStyle.secondary))
+                .frame(width: 16)
+                .opacity(showsGlyph ? 1 : 0)
+                .animation(.easeOut(duration: 0.12 * IslandMotion.timeScale), value: showsGlyph)
+            KeyCap()
+        }
+        .opacity(capture.kind == .empty ? 0 : 1)
+        .animation(.easeOut(duration: 0.15), value: capture.kind == .empty)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityHidden(capture.kind == .empty)
+    }
+
+    /// The same glyphs the sources list uses for a note and a link.
+    private var glyph: String {
+        if case .link = capture.kind { "link" } else { "note.text" }
     }
 
     private var accessibilityText: String {
