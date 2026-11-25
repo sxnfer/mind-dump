@@ -84,7 +84,8 @@ def clean_tables(database_url: str, storage_dir: Path) -> None:
     """Every test starts with empty tables, ids from 1 and no landed files."""
     with psycopg.connect(database_url, autocommit=True) as conn:
         conn.execute(
-            "TRUNCATE items, tags, item_tags, fetches, item_versions RESTART IDENTITY CASCADE"
+            "TRUNCATE items, tags, item_tags, fetches, item_versions, jobs, chunks"
+            " RESTART IDENTITY CASCADE"
         )
     shutil.rmtree(storage_dir)
     storage_dir.mkdir()

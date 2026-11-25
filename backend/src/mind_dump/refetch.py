@@ -1,4 +1,4 @@
-"""Fetch saved links now, land the pages and version their text (P1).
+"""Fetch saved links now, outside the queue: land the pages and version their text (P1).
 
     python -m mind_dump.refetch 7 12        # these items
     python -m mind_dump.refetch --all       # every saved link
@@ -6,8 +6,12 @@
 
 In Docker:  docker compose exec api python -m mind_dump.refetch --all
 
-Until the worker and queue arrive (P3), this command is how pages get fetched. The worker
-will call the same process_fetch, so nothing here is thrown away.
+Since P3 the worker fetches every saved link (D6), with retries (D35). This command stays
+as the direct path: it shows each page's status at once, in the terminal. It calls the
+same process_fetch and rebuild_versions as the worker. Chunks are the worker's job, so
+after each link it queues a no-network `rebuild` job (unless the link already has a job
+waiting); the worker then rewrites the chunks from the new text.
+To queue a normal run (fetch included) instead, use POST /items/{id}/process.
 """
 
 import argparse
@@ -17,7 +21,7 @@ import httpx2
 import psycopg
 from psycopg.rows import dict_row
 
-from mind_dump import pages
+from mind_dump import jobs, pages
 from mind_dump.config import load_settings
 from mind_dump.fetcher import PageTooLarge, fetch, make_client
 from mind_dump.storage import create_storage
@@ -60,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.rebuild:
                 count = pages.rebuild_versions(conn, storage, item_id)
                 print(f"item {item_id}: {count} version(s), rebuilt from landed files")
+                _queue_chunking(conn, item_id)
                 continue
             try:
                 result = fetch(client, link["url"])
@@ -72,7 +77,16 @@ def main(argv: list[str] | None = None) -> int:
             version = "NEW VERSION" if outcome.new_version else "text unchanged"
             status = f"HTTP {result.http_status} {result.final_url}"
             print(f"item {item_id}: {status} | {stored} | {version}")
+            _queue_chunking(conn, item_id)
     return 1 if failures else 0
+
+
+def _queue_chunking(conn: psycopg.Connection, item_id: int) -> None:
+    """Let the worker rewrite the chunks from the new text, with no second fetch."""
+    if jobs.enqueue(conn, item_id, "rebuild") is None:
+        print(f"item {item_id}: a job is already waiting; it will chunk the new text")
+    else:
+        print(f"item {item_id}: queued a rebuild job; the worker rewrites the chunks")
 
 
 if __name__ == "__main__":

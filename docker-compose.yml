@@ -1,5 +1,5 @@
 # One command runs the whole backend (D18):   docker compose up
-# Order: db (healthy) → migrate (runs, exits 0) → api.
+# Order: db (healthy) → migrate (runs, exits 0) → api and worker.
 # Settings come from .env next to this file (copy .env.example; never commit .env).
 name: mind-dump
 
@@ -47,10 +47,31 @@ services:
     volumes:
       - rawdata:/data  # D5: landed pages live outside the container
     ports:
-      - "127.0.0.1:8000:8000"
+      # Loopback only, like the db. API_PORT in .env moves it if 8000 is taken.
+      - "127.0.0.1:${API_PORT:-8000}:8000"
     depends_on:
       migrate:
         condition: service_completed_successfully
+    restart: unless-stopped
+
+  # D6: claims jobs from the jobs table, fetches links, chunks text. Same image as the api.
+  # Several copies are safe (FOR UPDATE SKIP LOCKED):  docker compose up --scale worker=2
+  worker:
+    build: ./backend
+    image: mind-dump-api:local
+    command: ["python", "-m", "mind_dump.worker"]
+    environment:
+      <<: *database-url
+    volumes:
+      - rawdata:/data  # the same landed pages as the api (D5, D28)
+    healthcheck:
+      disable: true  # no HTTP server: the image's /health check would always fail here
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # SIGTERM lets the current job finish; Compose waits this long before SIGKILL.
+    # Killed anyway, the job's lease runs out and it runs again (D30).
+    stop_grace_period: 30s
     restart: unless-stopped
 
 volumes:
