@@ -62,7 +62,10 @@ DEFAULT_DATABASE = "mind_dump_eval"
 TOP_K = 5  # recall@5
 DEPTH = 10  # MRR@10: how far down the list a hit still counts for MRR
 MODES: tuple[search_mod.Mode, ...] = ("keyword", "vector", "hybrid")
-_TABLES = "items, tags, item_tags, fetches, item_versions, jobs, chunks, file_texts"
+_TABLES = (
+    "items, tags, item_tags, fetches, item_versions, jobs, chunks, file_texts, "
+    "conversations, messages, model_usage, ask_requests"
+)
 
 
 @dataclass(frozen=True)

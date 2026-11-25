@@ -64,6 +64,7 @@ from mind_dump.filetext import FileText, extract_file
 from mind_dump.jobs import Job
 from mind_dump.storage import Storage, create_storage
 from mind_dump.uploads import file_key
+from mind_dump.usage import UsageRecorder
 
 __all__ = ["PermanentError", "TemporaryError", "Worker", "check_status"]
 
@@ -431,8 +432,12 @@ def main() -> int:
         ) as conn,
         make_client() as http,
     ):
-        embedder = create_embedder(settings)
-        describer = create_describer(settings)
+        # D39: every embedding and description call writes a model_usage row. Through this
+        # autocommit connection, each row commits at once: the model clients are only
+        # called in steps 3 and 4, before the D30 transaction opens.
+        recorder = UsageRecorder.for_connection(conn, settings)
+        embedder = create_embedder(settings, recorder)
+        describer = create_describer(settings, recorder)
         log.info(
             "worker started; embeddings: %s; image descriptions: %s",
             embedder.model if embedder else "off (no VOYAGE_API_KEY): chunks keep no vectors",

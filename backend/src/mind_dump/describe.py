@@ -23,6 +23,7 @@ import anthropic
 
 from mind_dump.config import Settings
 from mind_dump.errors import PermanentError, TemporaryError
+from mind_dump.usage import Usage, UsageSink
 
 # The API's limits for one image (Vision docs, checked 2026-11-25): at most 10 MB once
 # base64-encoded, and at most 8000 x 8000 pixels. Larger images are refused with a 400,
@@ -101,15 +102,62 @@ def check_image(data: bytes, media_type: str) -> None:
         )
 
 
+def api_error(exc: anthropic.APIError, model: str) -> TemporaryError | PermanentError:
+    """An SDK error as one of D35's two kinds, with a reason that names what to check.
+    Shared with the agent's client (llm.py). Never includes the key."""
+    if isinstance(exc, anthropic.APIConnectionError):  # includes APITimeoutError
+        return TemporaryError(f"Can't reach the Claude API: {exc}")
+    if isinstance(exc, anthropic.AuthenticationError):
+        return PermanentError(
+            f"The Claude API rejected the key (HTTP 401): check ANTHROPIC_API_KEY in .env "
+            f"({exc.message})"
+        )
+    if isinstance(exc, anthropic.PermissionDeniedError):
+        return PermanentError(
+            f"The Claude API refused this key (HTTP 403): check ANTHROPIC_API_KEY in .env "
+            f"({exc.message})"
+        )
+    if isinstance(exc, anthropic.NotFoundError):
+        return PermanentError(
+            f"The Claude API has no model {model!r} (HTTP 404): check LLM_MODEL ({exc.message})"
+        )
+    if isinstance(exc, anthropic.APIStatusError):
+        if exc.status_code == 429 or exc.status_code >= 500:
+            return TemporaryError(f"The Claude API answered HTTP {exc.status_code}: {exc.message}")
+        return PermanentError(
+            f"The Claude API refused the request (HTTP {exc.status_code}): {exc.message}"
+        )
+    return PermanentError(f"The Claude API failed: {exc}")
+
+
+def usage_of(message: object, purpose: str, provider: str = "anthropic") -> Usage:
+    """A response's token counts (D39). `model` is the model that served it: with a
+    refusal fallback (D8) that can be another one, at another price."""
+    usage = getattr(message, "usage", None)
+    return Usage(
+        provider=provider,
+        model=str(getattr(message, "model", "") or "unknown"),
+        purpose=purpose,
+        input_tokens=getattr(usage, "input_tokens", 0) or 0,
+        output_tokens=getattr(usage, "output_tokens", 0) or 0,
+        cache_creation_input_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
+        cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+    )
+
+
 class ClaudeDescriber:
-    def __init__(self, client: anthropic.Anthropic, model: str) -> None:
+    def __init__(
+        self, client: anthropic.Anthropic, model: str, on_usage: UsageSink | None = None
+    ) -> None:
         self.model = model
         self._client = client
+        self.on_usage = on_usage  # D39: one model_usage row per call
 
-    def _create(self, content: list[dict], max_tokens: int) -> object:
-        """One Messages call, with every SDK error mapped to D35's two kinds."""
+    def _create(self, content: list[dict], max_tokens: int, purpose: str) -> object:
+        """One Messages call, with every SDK error mapped to D35's two kinds. A call that
+        returns (even a refusal) is reported to on_usage: it was paid for."""
         try:
-            return self._client.beta.messages.create(
+            message = self._client.beta.messages.create(
                 model=self.model,
                 max_tokens=max_tokens,
                 # Thinking is always on for this model; effort sets how much. A
@@ -119,31 +167,11 @@ class ClaudeDescriber:
                 fallbacks="default",
                 messages=[{"role": "user", "content": content}],
             )
-        except anthropic.APIConnectionError as exc:  # includes APITimeoutError
-            raise TemporaryError(f"Can't reach the Claude API: {exc}") from exc
-        except anthropic.AuthenticationError as exc:
-            raise PermanentError(
-                f"The Claude API rejected the key (HTTP 401): check ANTHROPIC_API_KEY in .env "
-                f"({exc.message})"
-            ) from exc
-        except anthropic.PermissionDeniedError as exc:
-            raise PermanentError(
-                f"The Claude API refused this key (HTTP 403): check ANTHROPIC_API_KEY in .env "
-                f"({exc.message})"
-            ) from exc
-        except anthropic.NotFoundError as exc:
-            raise PermanentError(
-                f"The Claude API has no model {self.model!r} (HTTP 404): check LLM_MODEL "
-                f"({exc.message})"
-            ) from exc
-        except anthropic.APIStatusError as exc:
-            if exc.status_code == 429 or exc.status_code >= 500:
-                raise TemporaryError(
-                    f"The Claude API answered HTTP {exc.status_code}: {exc.message}"
-                ) from exc
-            raise PermanentError(
-                f"The Claude API refused the request (HTTP {exc.status_code}): {exc.message}"
-            ) from exc
+        except anthropic.APIError as exc:
+            raise api_error(exc, self.model) from exc
+        if self.on_usage is not None:
+            self.on_usage(usage_of(message, purpose))
+        return message
 
     def describe(self, data: bytes, media_type: str) -> str:
         check_image(data, media_type)
@@ -155,13 +183,13 @@ class ClaudeDescriber:
                 "data": base64.standard_b64encode(data).decode("ascii"),
             },
         }
-        message = self._create([image, {"type": "text", "text": PROMPT}], MAX_TOKENS)
+        message = self._create([image, {"type": "text", "text": PROMPT}], MAX_TOKENS, "describe")
         return text_of(message)
 
     def check(self) -> None:
         """A tiny call with the same request shape as describe(): proves the key, the
         model name and the beta header all work. Raises like describe()."""
-        self._create([{"type": "text", "text": "Reply with the word OK."}], 64)
+        self._create([{"type": "text", "text": "Reply with the word OK."}], 64, "check")
 
 
 def text_of(message: object) -> str:
@@ -196,24 +224,30 @@ class FakeDescriber:
         text: str = "A photo of a whiteboard.",
         model: str = "fake-describer",
         respond: Callable[[bytes, str], str] | None = None,
+        on_usage: UsageSink | None = None,
     ) -> None:
         self.model = model
         self.text = text
         self.respond = respond
+        self.on_usage = on_usage
         self.calls = 0
 
     def describe(self, data: bytes, media_type: str) -> str:
         self.calls += 1
         check_image(data, media_type)
-        return self.respond(data, media_type) if self.respond else self.text
+        text = self.respond(data, media_type) if self.respond else self.text
+        if self.on_usage is not None:  # made-up counts, so usage tests have numbers
+            self.on_usage(Usage("fake", self.model, "describe", 1000, len(text.split())))
+        return text
 
 
-def create_describer(settings: Settings) -> Describer | None:
+def create_describer(settings: Settings, on_usage: UsageSink | None = None) -> Describer | None:
     """Claude when ANTHROPIC_API_KEY is set; None when it is not. The key is passed in
-    explicitly, so only the environment variable we document is ever used."""
+    explicitly, so only the environment variable we document is ever used. on_usage
+    receives every call's token counts (D39)."""
     if settings.anthropic_api_key is None:
         return None
     # 120 s a try, and one quick SDK retry for a blip: at most about 4 minutes, inside the
     # job's 5-minute lease (jobs.DEFAULT_LEASE). D35's schedule handles longer outages.
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=120.0, max_retries=1)
-    return ClaudeDescriber(client, settings.llm_model)
+    return ClaudeDescriber(client, settings.llm_model, on_usage)
