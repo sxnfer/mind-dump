@@ -17,11 +17,23 @@ final class NotchWindow: NSPanel {
     /// Big enough for the widest pill, the tallest card and their shadows.
     private static let size = NSSize(width: IslandLayout.windowSize.width, height: IslandLayout.windowSize.height)
 
-    /// Only the open capsule takes keystrokes; a closed island never steals them.
-    var takesKeyboard = false {
-        // The open capsule is not a drop target: its text box takes drops its own way.
-        didSet { hosting?.takesDrops = !takesKeyboard }
+    /// The capsule is out. An open capsule is not a drop target: its text box takes drops
+    /// its own way.
+    var isCapsuleOpen = false {
+        didSet { if isCapsuleOpen != oldValue { hosting?.takesDrops = !isCapsuleOpen } }
     }
+
+    /// Only a capsule the user opened (or claimed) takes keystrokes. A closed island, and a
+    /// capsule that opened by itself, never steal them (`OpenReason`).
+    var takesKeyboard = false
+
+    /// A press in this window while the capsule is open but waiting (opened by itself, not
+    /// key). The receiver decides whether it claims the capsule; the press then goes on to
+    /// what it landed on, so a control still does its job.
+    var onWaitingPress: ((NSPoint) -> Void)?
+    /// The release that ends a press which claimed the capsule.
+    var onClaimEnded: (() -> Void)?
+    private var claiming = false
 
     private(set) var screenFrame: NSRect = .zero
 
@@ -60,6 +72,33 @@ final class NotchWindow: NSPanel {
 
     override var canBecomeKey: Bool { takesKeyboard }
     override var canBecomeMain: Bool { false }
+
+    /// The one way a waiting capsule gets the keyboard: the user presses inside it. The
+    /// press is caught here, before AppKit hands it on, so the claim comes first.
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown, isCapsuleOpen, !takesKeyboard {
+            onWaitingPress?(convertPoint(toScreen: event.locationInWindow))
+            claiming = takesKeyboard
+        }
+        super.sendEvent(event)
+        // AppKit makes a non-activating panel key on a press without asking `canBecomeKey`
+        // (seen in a stack: `_handleLeftMouseDownEvent` calls `_NSShowNonActivatingKeyWindow`).
+        // A press on the notch, a pill or the peek must not keep the keyboard: give it back
+        // as soon as the press is handled. A click that opens the capsule takes it properly
+        // on release, through `IslandModel`.
+        if event.type == .leftMouseDown, isKeyWindow, !takesKeyboard {
+            resignKey()
+        }
+        // A press on the text runs the text view's own tracking loop inside `super`, which
+        // takes the release itself; then the release is the current event when `super`
+        // returns.
+        let released = event.type == .leftMouseUp
+            || (event.type == .leftMouseDown && NSApp.currentEvent?.type == .leftMouseUp)
+        if claiming, released {
+            claiming = false
+            onClaimEnded?()
+        }
+    }
 
     /// Pins the window top-centre on the screen with a notch (or the main screen) and
     /// returns that screen's notch measurements.

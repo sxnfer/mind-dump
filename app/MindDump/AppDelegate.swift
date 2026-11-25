@@ -39,12 +39,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.dropReceiver = drop
         drop.zoneContains = { [weak pointer] point in pointer?.contains(point) ?? false }
 
-        // An open capsule takes the keyboard; anything else gives it back to your app.
-        island.onOpenChange = { [weak window] open in
-            guard let window else { return }
-            window.takesKeyboard = open
-            if open { window.makeKey() } else { window.resignKey() }
+        // The keyboard rule lives in `IslandModel.hasKeyboard`; this only carries it out.
+        island.onOpenChange = { [weak self] open, keyboard in self?.applyKeyboard(open: open, keyboard: keyboard) }
+        // A capsule that opened by itself waits; a press inside it (not on the notch, which
+        // closes it) makes it the user's. The caret then goes to the end of the kept words.
+        window.onWaitingPress = { [weak self] point in
+            guard let self, let window = self.window else { return }
+            if point.y < window.bodyRect(for: self.island.metrics).minY { self.island.claim() }
         }
+        window.onClaimEnded = { [weak self] in self?.caretToEnd() }
+        listenForKeyboardLoss(window)
         // Closing stops an answer still on its way (the backend then saves nothing).
         island.onWillClose = { [weak self] in self?.ask.panelWillClose() }
         ask.reveal.linkView = window.contentView
@@ -67,6 +71,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.pointer?.islandChanged()
             #if DEBUG
             self?.frames?.begin(name)
+            // Closed, a pill, a peek, a drop target or a waiting capsule must never hold
+            // the keyboard. Silence here is the proof; this line would say otherwise.
+            if let self, let window = self.window, window.isKeyWindow, !self.island.hasKeyboard {
+                print("[key] WRONG: key after \(name): \(KeyState.describe(window: window, island: self.island))")
+                fflush(stdout)
+            }
             #endif
         }
 
@@ -110,6 +120,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Carries out `IslandModel.hasKeyboard`: take the keyboard, or make sure this window
+    /// does not hold it.
+    private func applyKeyboard(open: Bool, keyboard: Bool) {
+        guard let window else { return }
+        window.isCapsuleOpen = open
+        window.takesKeyboard = keyboard
+        if keyboard {
+            window.makeKey()
+        } else if window.isKeyWindow {
+            window.resignKey()
+        }
+    }
+
+    /// After a press claimed a waiting capsule: the caret at the end of the kept words, so
+    /// typing adds to them and Return retries.
+    private func caretToEnd() {
+        // On the next turn: the text field places the caret where the click landed after
+        // the press is handled, and this must come after that.
+        DispatchQueue.main.async { [weak self] in
+            guard let editor = self?.window?.firstResponder as? NSTextView, editor.isFieldEditor else { return }
+            editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+        }
+    }
+
+    /// The user moved to another app while the capsule had the keyboard: it closes, as a
+    /// click elsewhere closes it.
+    ///
+    /// The window's own signal comes first: a key window is told when it stops being key,
+    /// whatever took the keyboard (Cmd-Tab, a Dock click, a click in another app's window,
+    /// another app opening a window). An app that becomes active is watched as well, in
+    /// case a switch ever leaves this non-activating panel key. Both end in the same close,
+    /// which does nothing the second time.
+    private func listenForKeyboardLoss(_ window: NotchWindow) {
+        let center = NotificationCenter.default
+        center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.logKey("became key") }
+        }
+        center.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.logKey("resigned key")
+                self.island.keyboardTaken()
+            }
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let other = app?.processIdentifier != ProcessInfo.processInfo.processIdentifier
+            MainActor.assumeIsolated {
+                guard let self, other, self.island.hasKeyboard else { return }
+                self.logKey("another app became active")
+                self.island.keyboardTaken()
+            }
+        }
+    }
+
+    /// Debug builds print one `[key]` line for every change of who holds the keyboard.
+    private func logKey(_ event: String) {
+        #if DEBUG
+        guard let window else { return }
+        print("[key] \(event): \(KeyState.describe(window: window, island: island))")
+        fflush(stdout)
+        #endif
+    }
+
     @objc private func screensChanged() {
         guard let window else { return }
         island.layout = window.placeAtNotch()
@@ -125,7 +201,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "unpeek":
             island.hoverIsScripted = false
             island.hover(false, scripted: true)
-        case "open": island.open()
+        case "open": island.openByUser()
+        case "keystate": logKey("state")
+        case "resignkey": window?.resignKey()
         case "close": island.close()
         case "saved": island.show(IslandActivity(id: "debug", glyph: .check, text: "Saved"))
         case "reading":

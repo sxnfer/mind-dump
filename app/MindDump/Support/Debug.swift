@@ -93,7 +93,10 @@ final class FrameMonitor: NSObject {
 /// Lets a shell command drive the island, so its states can be reached without a hand
 /// on the mouse:  notifyutil -p io.github.sxnfer.MindDump.debug.open
 enum DebugRemote {
-    static let commands = ["peek", "unpeek", "open", "close", "saved", "reading", "ready", "failed", "film", "snap", "script"]
+    static let commands = [
+        "peek", "unpeek", "open", "close", "saved", "reading", "ready", "failed", "film", "snap", "script",
+        "keystate", "resignkey",
+    ]
     private static let prefix = "io.github.sxnfer.MindDump.debug."
 
     @MainActor private static var handler: ((String) -> Void)?
@@ -112,6 +115,33 @@ enum DebugRemote {
                 },
                 (prefix + command) as CFString, nil, .deliverImmediately
             )
+        }
+    }
+}
+
+/// Who holds the keyboard, in one line: for `[key]` log lines and the `keystate` verb.
+@MainActor
+enum KeyState {
+    static func describe(window: NSWindow, island: IslandModel) -> String {
+        let responder = window.firstResponder.map { String(describing: type(of: $0)) } ?? "none"
+        var editor = ""
+        if let text = window.firstResponder as? NSTextView, text.isFieldEditor {
+            // Where the caret is, against the text's length (counts only, not the words).
+            editor = " (field editor, caret \(text.selectedRange().location)+\(text.selectedRange().length) of \((text.string as NSString).length), last \(text.string.unicodeScalars.last.map { String($0.value, radix: 16) } ?? "-"))"
+        }
+        return "window key \(window.isKeyWindow) (can \(window.canBecomeKey)), app active \(NSApp.isActive), "
+            + "first responder \(responder)\(editor), opened by \(island.openedBy?.rawValue ?? "-"), "
+            + "showing \(name(island.presentation))"
+    }
+
+    /// The presentation's kind only: a drop target's words are the user's text.
+    private static func name(_ presentation: IslandPresentation) -> String {
+        switch presentation {
+        case .idle: "idle"
+        case .peek: "peek"
+        case .compact: "pill"
+        case .dropTarget: "drop target"
+        case .open: "capsule"
         }
     }
 }
@@ -258,6 +288,8 @@ final class FilmRecorder {
 ///     dragfile <path>           a drag carrying this one file arrives (several paths,
 ///                               separated by " | ", make a drag of several files)
 ///     dropfile [<path>]         release a file drag; no path: the one over it
+///     keystate                  print who holds the keyboard ([script] keystate: …)
+///     resignkey                 the window loses the keyboard, as when another app takes it
 ///     dragtypes                 list the views that take drags, and their types
 ///     boxsize                   the box's laid-out width against the width its text
 ///                               editor wraps at
@@ -367,6 +399,14 @@ final class DebugScript {
             let described = Self.describe(payload ?? drop?.current)
             let taken = drop?.dropped(payload) ?? false
             print("[script] dropfile: \(taken ? "saving " + described : "refused, " + described)")
+        case "keystate":
+            print("[script] keystate: \(KeyState.describe(window: window, island: island))")
+        case "resignkey":
+            // What AppKit calls on a key window when another app or window takes the
+            // keyboard. The window's real key status is not changed by this; only a real
+            // switch does that (see `AppDelegate.listenForKeyboardLoss`).
+            print("[script] resignkey")
+            window.resignKey()
         case "dragtypes":
             dragTypes()
         case "boxsize":

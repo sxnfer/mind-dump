@@ -56,6 +56,13 @@ struct CapsuleView: View {
             DispatchQueue.main.async { boxFocused = true }
         }
         .task { await warmFocus() }
+        // Saving disables the box, and a disabled field gives up the keyboard focus. After a
+        // failed save the capsule is still open with the words in it: the box takes the
+        // focus back, so typing goes on and Return retries.
+        .onChange(of: capture.isSaving) { _, saving in
+            guard !isRehearsal, !saving, island.presentation.isOpen else { return }
+            refocusBox()
+        }
         // The content stays built while the capsule is closed (see `IslandView`), so
         // opening and closing are changes of `isOpen`, not appear and disappear.
         .onChange(of: island.presentation.isOpen) { _, open in
@@ -209,6 +216,41 @@ struct CapsuleView: View {
         guard !Self.hasFocusedOnce, !island.presentation.isOpen else { return }
         Self.hasFocusedOnce = true
         boxFocused = true
+        #if DEBUG
+        // The warm-up must not make the window key: the closed island never holds the
+        // keyboard. (Checked on the next turn, after AppKit has moved the focus.)
+        DispatchQueue.main.async {
+            let key = NSApp.windows.contains { $0 is NotchWindow && $0.isKeyWindow }
+            print("[key] warm focus done: window key \(key), app active \(NSApp.isActive)")
+            fflush(stdout)
+        }
+        #endif
+    }
+
+    /// The box's text editor, if it holds this window's focus.
+    private static var editor: NSTextView? {
+        let window = NSApp.windows.first { $0 is NotchWindow }
+        guard let editor = window?.firstResponder as? NSTextView, editor.isFieldEditor else { return nil }
+        return editor
+    }
+
+    private var boxHasEditor: Bool { Self.editor != nil }
+
+    /// Give the box the focus again after something took it (a save disabled the box).
+    /// SwiftUI may still believe the box has it, and `true` again would then do nothing,
+    /// so let go first and take it back on the next turn. Nothing to do if it has it.
+    /// Taking focus selects all the text; the caret goes to its end instead, so the next
+    /// key adds to the words rather than replacing them.
+    private func refocusBox() {
+        guard !boxHasEditor else { return }
+        boxFocused = false
+        DispatchQueue.main.async {
+            boxFocused = true
+            DispatchQueue.main.async {
+                guard let editor = Self.editor else { return }
+                editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+            }
+        }
     }
 
     /// Opening focuses the box. If it opens in the first moments after launch, before
@@ -216,7 +258,9 @@ struct CapsuleView: View {
     /// seen. Every later open focuses at once.
     private func focusBox() {
         guard !Self.hasFocusedOnce else {
-            boxFocused = true
+            // Usually the box kept its focus since launch and this changes nothing; after a
+            // save it lost it (see `refocusBox`).
+            if boxHasEditor { boxFocused = true } else { refocusBox() }
             return
         }
         Self.hasFocusedOnce = true
