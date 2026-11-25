@@ -33,7 +33,8 @@ final class PanelModel {
     }
 
     func select(_ next: PanelMode) {
-        guard next != mode else { return }
+        // Only an open panel switches mode (see `AskModel.submit`).
+        guard island.presentation.isPanel, next != mode else { return }
         island.panelContentWillChange(next == .ask ? "mode-ask" : "mode-capture")
         // One transaction: the indicator slides, the old mode's content blurs out, the
         // new one comes in, and the height follows, all from the same moment.

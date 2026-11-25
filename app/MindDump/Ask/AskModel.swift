@@ -108,7 +108,9 @@ final class AskModel {
 
     func submit() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !isBusy else { return }
+        // Only an open panel asks: keys that reach a hidden panel (a script's posted
+        // events, a stray Return) must not send a question nobody can see.
+        guard island.presentation.isPanel, !text.isEmpty, !isBusy else { return }
         let conversation = conversationID
         island.panelContentWillChange("ask")
         withAnimation(contentSpring) {
@@ -141,6 +143,7 @@ final class AskModel {
 
     /// "New question" (or ⌘N): forget the conversation and start clean.
     func newQuestion() {
+        guard island.presentation.isPanel else { return }  // see `submit`
         guard question != nil || errorMessage != nil else {
             draft = ""  // nothing asked yet: a clean box is all "new" can mean
             return
@@ -171,12 +174,13 @@ final class AskModel {
     func toggle(_ source: Source) {
         focusRequests += 1
         island.panelContentWillChange("source-expand")
-        withAnimation(contentSpring) {
-            if expanded.contains(source.number) {
-                expanded.remove(source.number)
-            } else {
-                expanded.insert(source.number)
-            }
+        // Plain assignment; the list animates the change itself (`SourcesList`). An
+        // animated change made from out here left the scroll view's geometry stale,
+        // so the row could not be scrolled into view.
+        if expanded.contains(source.number) {
+            expanded.remove(source.number)
+        } else {
+            expanded.insert(source.number)
         }
     }
 
@@ -186,29 +190,33 @@ final class AskModel {
         NSWorkspace.shared.open(url)
     }
 
-    /// The panel closed. An answer still on its way is cancelled: the backend saves
-    /// nothing unless it sends "final", so the conversation is as it was. The question
-    /// goes back in the box, one Return from asking again.
-    func panelClosed() {
-        switch phase {
-        case .waiting, .answering:
-            guard answer == nil else {
-                reveal.flush()  // the answer is complete: show all of it next time
-                return
-            }
+    /// The panel is about to close. An answer still on its way is cancelled: the
+    /// backend saves nothing unless it sends "final", so the conversation is as it was.
+    /// The question goes back in the box, one Return from asking again.
+    ///
+    /// This runs before the collapse starts, and changes nothing on screen then: the
+    /// text stops flowing (no new characters while the panel blurs out), and everything
+    /// that moves layout (restoring the last answer, or showing the rest of a finished
+    /// one) waits until the panel has faded out. Doing it in the collapse's first frame
+    /// made that frame 13 to 38 ms late.
+    func panelWillClose() {
+        guard isBusy else { return }
+        reveal.pause()
+        if answer == nil {
             task?.cancel()
             task = nil
             onStream?(nil)
-            // Put the panel back as it was once it has faded out, not in the frame the
-            // close starts: doing both at once cost that frame 20 to 40 ms.
-            let question = question
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35 * IslandMotion.timeScale) { [weak self] in
-                guard let self, self.task == nil, self.isBusy else { return }  // a new ask started
-                if self.draft.isEmpty, let question { self.draft = question }
-                self.restoreLastTurn()
+        }
+        let question = question
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7 * IslandMotion.timeScale) { [weak self] in
+            guard let self, self.isBusy else { return }
+            if self.answer != nil {
+                self.reveal.flush()  // complete: show all of it next time
+                return
             }
-        default:
-            break
+            guard self.task == nil else { return }  // a new ask started meanwhile
+            if self.draft.isEmpty, let question { self.draft = question }
+            self.restoreLastTurn()
         }
     }
 
@@ -253,10 +261,10 @@ final class AskModel {
         lastTurn = (question, answer)
         onStream?(nil)
         island.panelContentWillChange("sources")
-        withAnimation(contentSpring) {
-            sources = answer.grounded ? Self.numbered(answer.citations, by: reveal.references) : []
-            phase = .done
-        }
+        // Plain assignment: each row brings itself in (`Entrance`), the notices fade in
+        // on their own, and the body follows the new height on its spring.
+        sources = answer.grounded ? Self.numbered(answer.citations, by: reveal.references) : []
+        phase = .done
     }
 
     private func fail(_ error: Error) {

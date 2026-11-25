@@ -283,8 +283,6 @@ final class DebugScript {
                 await click(at: NSPoint(x: body.midX + 30, y: body.midY))
             } else if let point = target(rest) {
                 await click(at: point)
-            } else {
-                print("[script] no target named \(rest)")
             }
         case "scroll":
             scroll(by: Double(rest) ?? -100)
@@ -309,10 +307,28 @@ final class DebugScript {
 
     /// The centre of a named control, on screen (see `debugTarget`).
     private func target(_ name: String) -> NSPoint? {
-        guard let frame = DebugTargets.frames[name], let content = window.contentView else { return nil }
+        // Only controls on screen now count: a target that is gone (or was only ever in
+        // the launch rehearsal) must not send a click to an old spot, where it would land
+        // outside the island and close the panel.
+        guard let frame = DebugTargets.frames[name]?.frame, let content = window.contentView else {
+            print("[script] no target: \(name)")
+            return nil
+        }
         // SwiftUI's global frame starts at the window's top-left; AppKit's at the bottom-left.
         let inWindow = NSPoint(x: frame.midX, y: content.bounds.height - frame.midY)
-        return window.convertPoint(toScreen: inWindow)
+        let point = window.convertPoint(toScreen: inWindow)
+        // On screen means inside the island's body, and inside the answer's visible area
+        // when the control scrolls with the answer.
+        var visible = window.bodyRect(for: island.metrics)
+        if name.hasPrefix("source-") || name.hasPrefix("open-"), let scrollView = answerScrollView() {
+            let shown = scrollView.convert(scrollView.bounds, to: nil)
+            visible = visible.intersection(window.convertToScreen(shown))
+        }
+        guard visible.contains(point) else {
+            print("[script] target out of view: \(name)")
+            return nil
+        }
+        return point
     }
 
     /// Press and release at a point on screen.
@@ -390,16 +406,39 @@ import SwiftUI
 /// Where named controls are on screen, so a debug script can click them as a person would.
 @MainActor
 enum DebugTargets {
-    static var frames: [String: CGRect] = [:]
+    /// Each frame with the view that recorded it, so only that view can remove it.
+    static var frames: [String: (owner: UUID, frame: CGRect)] = [:]
+}
+
+private struct DebugTargetRecorder: ViewModifier {
+    let name: String
+    @State private var owner = UUID()
+    @Environment(\.isRehearsal) private var isRehearsal
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                guard !isRehearsal else { return }  // the launch rehearsal is never clicked
+                DebugTargets.frames[name] = (owner, frame)
+            }
+            .onDisappear {
+                if DebugTargets.frames[name]?.owner == owner { DebugTargets.frames[name] = nil }
+            }
+    }
 }
 #endif
+
+extension EnvironmentValues {
+    /// True inside the launch rehearsal (see `IslandView.rehearsal`).
+    @Entry var isRehearsal = false
+}
 
 extension View {
     /// Debug builds remember this view's frame under `name` (for `click <name>` in a debug
     /// script). Release builds do nothing.
     func debugTarget(_ name: String) -> some View {
         #if DEBUG
-        onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { DebugTargets.frames[name] = $0 }
+        modifier(DebugTargetRecorder(name: name))
         #else
         self
         #endif

@@ -38,9 +38,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let window else { return }
             window.takesKeyboard = open
             if open { window.makeKey() } else { window.resignKey() }
-            // Closing stops an answer still on its way (the backend then saves nothing).
-            if !open { self?.ask.panelClosed() }
         }
+        // Closing stops an answer still on its way (the backend then saves nothing).
+        island.onPanelWillClose = { [weak self] in self?.ask.panelWillClose() }
         ask.reveal.linkView = window.contentView
         listenForPanelKeys()
 

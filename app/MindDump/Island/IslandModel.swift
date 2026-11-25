@@ -61,6 +61,9 @@ final class IslandModel {
 
     /// The window listens: an open panel takes the keyboard, anything else gives it back.
     var onPanelChange: ((Bool) -> Void)?
+    /// Called just before the panel starts to close, before the collapse is applied, so
+    /// work that would land in the collapse's first frame can be stopped first.
+    var onPanelWillClose: (() -> Void)?
     /// Called for every transition, so the frame monitor can time it.
     var onTransition: ((String) -> Void)?
 
@@ -226,6 +229,7 @@ final class IslandModel {
         _ next: IslandPresentation, metrics: IslandMetrics, motion: IslandMotion, name: String
     ) {
         let wasPanel = presentation.isPanel
+        if wasPanel && !next.isPanel { onPanelWillClose?() }
         let chosen = reduceMotion ? IslandMotion.reduced : motion
         isCollapsingToNotch = false
         lastTransition = .now

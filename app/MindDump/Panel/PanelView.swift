@@ -131,6 +131,8 @@ struct PanelView: View {
     }
 
     private func submit() {
+        // Return in a hidden panel does nothing, in either mode (see `AskModel.submit`).
+        guard island.presentation.isPanel else { return }
         switch panel.mode {
         case .capture: Task { await capture.submit() }
         case .ask: ask.submit()

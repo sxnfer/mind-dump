@@ -139,6 +139,7 @@ struct IslandView: View {
             .opacity(0)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
+            .environment(\.isRehearsal, true)
             .task {
                 try? await Task.sleep(for: .seconds(1))
                 rehearsing = false

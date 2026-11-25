@@ -142,9 +142,16 @@ struct AskSection: View {
                 // Keep the newest line in sight. Critically damped, unlike the body's
                 // spring: a rebound would move the text back up, which looks like the
                 // reader scrolling and would switch following off.
-                scroll.autoScrollUntil = CACurrentMediaTime() + 0.7 * IslandMotion.timeScale
-                withAnimation(island.reduceMotion ? IslandMotion.reduced.body : IslandMotion.spring(0.45, 1)) {
-                    proxy.scrollTo(Self.tailID, anchor: .bottom)
+                autoScroll(proxy, to: Self.tailID, anchor: .bottom, IslandMotion.spring(0.45, 1), holding: 0.7)
+            }
+            .onChange(of: ask.phase) { _, phase in
+                // The sources (and any notice) come in under the answer's last line. If the
+                // reader was following the newest line, keep following, so the rows are
+                // seen arriving; if they had scrolled up, leave them where they are. On the
+                // next turn of the main queue, once the rows are laid out.
+                guard phase == .done, scroll.following else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12 * IslandMotion.timeScale) {
+                    autoScroll(proxy, to: Self.tailID, anchor: .bottom, IslandMotion.spring(0.6, 1), holding: 1.0)
                 }
             }
             .onChange(of: ask.turnID) { _, _ in
@@ -154,9 +161,10 @@ struct AskSection: View {
             }
             .onChange(of: ask.expanded) { old, new in
                 // A row just opened: scroll only as far as needed to show its passage.
+                // On the next turn of the main queue, once the row has its new height.
                 guard let opened = new.subtracting(old).first else { return }
-                withAnimation(island.reduceMotion ? IslandMotion.reduced.body : IslandMotion.resize.body) {
-                    proxy.scrollTo(SourcesList.rowID(opened))
+                DispatchQueue.main.async {
+                    autoScroll(proxy, to: SourcesList.rowEndID(opened), anchor: nil, IslandMotion.spring(0.5, 1), holding: 0.8)
                 }
             }
         }
@@ -205,6 +213,22 @@ struct AskSection: View {
     }
 
     // MARK: Scrolling
+
+    /// The view's own scrolling (following the newest line, the sources, an opened row).
+    /// While it runs, its motion is not mistaken for the reader's (`autoScrollUntil`).
+    private func autoScroll(
+        _ proxy: ScrollViewProxy, to id: String, anchor: UnitPoint?, _ animation: Animation, holding seconds: Double
+    ) {
+        scroll.autoScrollUntil = CACurrentMediaTime() + seconds * IslandMotion.timeScale
+        withAnimation(island.reduceMotion ? IslandMotion.reduced.body : animation, completionCriteria: .logicallyComplete) {
+            proxy.scrollTo(id, anchor: anchor)
+        } completion: {
+            // After an animated scroll, SwiftUI kept hit-testing the rows at their old
+            // places until a real scroll event came: a click on a source did nothing.
+            // Landing once more, without animation, on the same spot brings it up to date.
+            proxy.scrollTo(id, anchor: anchor)
+        }
+    }
 
     private func scrolled(to frame: CGRect) {
         let grew = abs(frame.height - contentHeight) > 0.5
@@ -353,7 +377,9 @@ private struct SourcesList: View {
     let ask: AskModel
     let island: IslandModel
 
-    static func rowID(_ number: Int) -> String { "source-row-\(number)" }
+    /// A zero-height mark at a row's bottom edge: scrolling it into view shows all of
+    /// an opened row (a row whose top is already on screen counts as visible).
+    static func rowEndID(_ number: Int) -> String { "source-row-end-\(number)" }
 
     var body: some View {
         let animateIn = !ask.sourcesHaveEntered
@@ -366,13 +392,16 @@ private struct SourcesList: View {
                 .modifier(Entrance(order: 0, animate: animateIn, reduceMotion: island.reduceMotion))
             ForEach(Array(ask.sources.enumerated()), id: \.element.id) { index, source in
                 SourceRow(ask: ask, island: island, source: source, expanded: ask.expanded.contains(source.number))
-                    .id(Self.rowID(source.number))
+                    .overlay(alignment: .bottom) {
+                        Color.clear.frame(height: 0).id(Self.rowEndID(source.number))
+                    }
                     .modifier(Entrance(order: index + 1, animate: animateIn, reduceMotion: island.reduceMotion))
             }
         }
         // Rows have their own padding for the hover panel; pull them back so the
         // numbers line up with the answer's left edge.
         .padding(.horizontal, -8)
+        .animation(island.reduceMotion ? IslandMotion.reduced.body : IslandMotion.resize.body, value: ask.expanded)
         .onAppear { ask.sourcesHaveEntered = true }
     }
 }
