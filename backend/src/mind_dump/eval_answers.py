@@ -9,7 +9,8 @@ What it does, in order:
    the search eval: it empties its tables, so it refuses any database whose name doesn't
    end in _eval or _test.
 2. Load the corpus (backend/eval/corpus/) through the real pipeline (eval.load_into):
-   with VOYAGE_API_KEY the chunks are embedded and the agent's searches are hybrid;
+   with the embedding key (OPENAI_API_KEY by default; VOYAGE_API_KEY with
+   EMBEDDING_PROVIDER=voyage) the chunks are embedded and the agent's searches are hybrid;
    without it they are keyword only, and the report says so.
 3. Check the questions (backend/eval/answers.json): every expected passage must sit whole
    inside one chunk of its document, or no citation could ever point at it.
@@ -53,9 +54,9 @@ from psycopg.rows import dict_row
 from mind_dump import conversations as convs
 from mind_dump import eval as search_eval
 from mind_dump.agent import MARKER, Context
-from mind_dump.config import DEFAULT_EMBEDDING_MODEL, DEFAULT_LLM_MODEL, Settings
+from mind_dump.config import DEFAULT_LLM_MODEL, Settings, embedding_settings
 from mind_dump.describe import FALLBACK_BETA, api_error, usage_of
-from mind_dump.embeddings import Embedder, VoyageEmbedder
+from mind_dump.embeddings import Embedder, create_embedder
 from mind_dump.errors import PermanentError, TemporaryError
 from mind_dump.llm import LLM, ClaudeLLM
 from mind_dump.migrate import migrate
@@ -454,6 +455,7 @@ def main(
         migrations_dir=search_eval.MIGRATIONS_DIR,
         llm_model=search_eval._setting("LLM_MODEL", dotenv) or DEFAULT_LLM_MODEL,
         llm_effort=search_eval._setting("LLM_EFFORT", dotenv) or "medium",
+        **embedding_settings(lambda name: search_eval._setting(name, dotenv)),
     )
     make_judge = None
     if llm is None:
@@ -470,10 +472,7 @@ def main(
             def make_judge(sink: UsageSink) -> Judge:
                 return ClaudeJudge(client, settings.llm_model, sink)
 
-    embedder: Embedder | None = None
-    if not fake and (voyage := search_eval._setting("VOYAGE_API_KEY", dotenv)):
-        model = search_eval._setting("EMBEDDING_MODEL", dotenv) or DEFAULT_EMBEDDING_MODEL
-        embedder = VoyageEmbedder(voyage, model)
+    embedder: Embedder | None = None if fake else create_embedder(settings)
 
     url = args.database_url or search_eval.default_database_url(dotenv)
     out(f"Database: {search_eval.check_database_name(url)}; model: {llm.model}")

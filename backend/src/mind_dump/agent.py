@@ -270,6 +270,9 @@ def _search_filters(args: dict, ctx: Context) -> tuple[search_mod.Filters, str |
     )
 
 
+WORDS_ONLY = "Search by meaning is unavailable right now: these passages matched by words only."
+
+
 def tool_search(conn: Conn, args: dict, ctx: Context) -> tuple[dict, dict[int, dict]]:
     query = args.get("query")
     if not isinstance(query, str) or not query.strip():
@@ -292,7 +295,9 @@ def tool_search(conn: Conn, args: dict, ctx: Context) -> tuple[dict, dict[int, d
             for s in found.values()
         ]
     }
-    notes = [n for n in (notice, result.notice) if n]
+    # The API's notice names settings and providers for the owner; the model gets only
+    # what it needs to read the results. No setting, key or provider name reaches it.
+    notes = [n for n in (notice, WORDS_ONLY if result.degraded else None) if n]
     if not out["results"]:
         notes.append("No passages matched. Try other words.")
     if notes:

@@ -14,7 +14,7 @@ You need Docker Desktop and Xcode.
 # 1. Settings: copy the example and set a database password
 cp .env.example .env
 sed -i '' "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 24)/" .env
-#    Optional: add VOYAGE_API_KEY and ANTHROPIC_API_KEY to .env (see "AI model keys" below)
+#    Optional: add OPENAI_API_KEY and ANTHROPIC_API_KEY to .env (see "AI model keys" below)
 
 # 2. Backend: Postgres, then migrations, then the API and the worker, in order
 docker compose up -d --wait api worker
@@ -43,7 +43,7 @@ Upload a PDF, PNG or JPEG (at most 25 MB) as the raw request body. The same byte
 curl -si --data-binary @file.pdf -H 'Content-Disposition: attachment; filename="file.pdf"' localhost:8000/items/upload
 curl -s localhost:8000/items/1                 # status: queued, processing, ready or error
 curl -s localhost:8000/items/1/text            # the file's text, with its pages
-curl -s localhost:8000/items/1/chunks          # passages with page numbers, and whether each has a vector
+curl -s localhost:8000/items/1/chunks          # passages (with chunk_id, as in search hits and citations), page numbers, and whether each has a vector
 ```
 
 ### Search
@@ -53,7 +53,7 @@ curl -s localhost:8000/items/1/chunks          # passages with page numbers, and
 ```bash
 curl -s "localhost:8000/search?q=buffer+pool"                          # hybrid: words and meaning, merged
 curl -s "localhost:8000/search?q=%22buffer+pool%22+-fire&mode=keyword" # exact phrase, without "fire"
-curl -s "localhost:8000/search?q=woodland+catches+fire&mode=vector"    # by meaning (needs VOYAGE_API_KEY)
+curl -s "localhost:8000/search?q=woodland+catches+fire&mode=vector"    # by meaning (needs OPENAI_API_KEY)
 curl -s "localhost:8000/search?q=registry&type=link&from=2026-11-01&to=2026-11-30&tag=carbon&limit=5"
 curl -s "localhost:8000/search?q=leakage&item_id=7"                    # one item's passages
 curl -s -X PUT localhost:8000/items/7/tags -H 'content-type: application/json' \
@@ -61,9 +61,10 @@ curl -s -X PUT localhost:8000/items/7/tags -H 'content-type: application/json' \
 ```
 
 - `mode`: `hybrid` (default), `keyword` or `vector`. The response's `mode` says what really ran.
-- Keywords: chunks with all your words come first, then chunks with any of them (words are stemmed, so "retries" finds "retry"). `"quotes"` for a phrase or `-word` to exclude switch to exact matching: every word must appear. `or` means either.
+- Keywords (`mode=keyword`): chunks with all your words come first, then chunks with any of them (words are stemmed, so "retries" finds "retry"). `"quotes"` for a phrase or `-word` to exclude switch to exact matching: every word must appear. `or` means either.
+- Hybrid: the meaning list does the loose matching, so the keyword list adds only exact evidence to the merge: chunks with every word you typed, then chunks holding a code or number you typed (`MD-2291`, `DQ-117`). A chunk sharing one ordinary word with your question gets no keyword boost (D37). If hybrid falls back to keywords, it uses the keyword rule above.
 - Filters: `type` (note, link, file), `from` and `to` (a date means the whole day, UTC, or a full time), `tag`, `item_id`. They narrow both lists before ranking, so a filter never hides a match.
-- Without `VOYAGE_API_KEY`, or when Voyage is failing, hybrid returns keyword results with `"degraded": true` and a `notice`; `mode=vector` answers 503 with the reason.
+- Without the embedding key (`OPENAI_API_KEY`, or `VOYAGE_API_KEY` with `EMBEDDING_PROVIDER=voyage`), or when the embedding API is failing, hybrid returns keyword results with `"degraded": true` and a `notice`; `mode=vector` answers 503 with the reason. Both name the key to set.
 - Tags are normalised one way: trimmed, inner spaces squeezed to one, lowercased. So `?tag=carbon markets` finds an item tagged `Carbon  Markets`.
 
 ### Measure search
@@ -76,7 +77,7 @@ uv run python -m mind_dump.eval                 # keyword only without a key; al
 uv run python -m mind_dump.eval --no-results    # print only
 ```
 
-It reads `VOYAGE_API_KEY` from the environment or from `.env`; with a key, the 30 chunks and 20 questions are embedded (a few thousand tokens). CI runs it in keyword mode and fails if keyword recall@5 drops below its floor.
+It reads `EMBEDDING_PROVIDER` and that provider's key (`OPENAI_API_KEY` by default) from the environment or from `.env`; with a key, the 30 chunks and 20 questions are embedded (a few thousand tokens). CI runs it in keyword mode and fails if keyword recall@5 drops below its floor.
 
 ### Ask and discuss
 
@@ -108,7 +109,7 @@ curl -s localhost:8000/conversations -H 'content-type: application/json' \
 
 ### Cost: usage, the daily cap and the rate limit
 
-Every model call (answers, image descriptions, embeddings, the eval's judge) is recorded with its tokens and an estimated cost (D39). The estimate uses list prices kept in the code (Claude's from Anthropic's model table); Voyage's is a setting, `VOYAGE_PRICE_PER_MTOK`, with `voyage-4`'s list price as its default.
+Every model call (answers, image descriptions, embeddings, the eval's judge) is recorded with its tokens and an estimated cost (D39). The estimate uses list prices kept in the code (Claude's from Anthropic's model table); embedding prices come from a small table per model (`text-embedding-3-small` $0.02 and `-3-large` $0.13 per million tokens, derived from OpenAI's "pages per dollar" table, so check them against OpenAI's pricing page; `voyage-4` $0.06, Voyage's list price), and `EMBEDDING_PRICE_PER_MTOK` overrides them. An embedding model not in the table is priced at the dearest entry, so the estimate errs toward the cap.
 
 ```bash
 curl -s localhost:8000/usage        # today (UTC) and the last 7 days, per model and purpose
@@ -122,7 +123,7 @@ Set them in `.env`, then `docker compose up -d api worker`.
 
 ### Measure answers
 
-`python -m mind_dump.eval_answers` asks 10 questions about the eval corpus (and 3 it can't answer) through the real agent, and checks for each: every citation valid, the expected passage cited, the key facts stated, and (one small Claude call per citation) whether the cited passage supports its sentence. It writes the "Answers" section of `docs/results.md`. It needs `ANTHROPIC_API_KEY` (and uses `VOYAGE_API_KEY` for hybrid search if set); every call it makes is priced and the total is printed. Without the key it says the eval is pending.
+`python -m mind_dump.eval_answers` asks 10 questions about the eval corpus (and 3 it can't answer) through the real agent, and checks for each: every citation valid, the expected passage cited, the key facts stated, and (one small Claude call per citation) whether the cited passage supports its sentence. It writes the "Answers" section of `docs/results.md`. It needs `ANTHROPIC_API_KEY` (and uses the embedding key, `OPENAI_API_KEY` by default, for hybrid search if set); every call it makes is priced and the total is printed. Without the key it says the eval is pending.
 
 ```bash
 cd backend
@@ -132,11 +133,12 @@ uv run python -m mind_dump.eval_answers --no-results  # print only
 
 ### AI model keys (optional)
 
-Each owner uses their own keys (D8). Both are optional:
+Each owner uses their own keys (D8). All are optional. Embeddings come from OpenAI by default (`text-embedding-3-small`, 1,024 dimensions); set `EMBEDDING_PROVIDER=voyage` to use Voyage AI (`voyage-4`) instead. Only the chosen provider's key is used.
 
 | Key | Get it at | Without it |
 | --- | --- | --- |
-| `VOYAGE_API_KEY` | dashboard.voyageai.com | Everything is saved, read and chunked; chunks have no vectors, so search finds exact words only (hybrid falls back to keyword results). |
+| `OPENAI_API_KEY` | platform.openai.com | Everything is saved, read and chunked; chunks have no vectors, so search finds exact words only (hybrid falls back to keyword results). |
+| `VOYAGE_API_KEY` | dashboard.voyageai.com | Only used with `EMBEDDING_PROVIDER=voyage`, in place of `OPENAI_API_KEY`. |
 | `ANTHROPIC_API_KEY` | platform.claude.com | Images end in `error` (there is nothing to read without a description), and asking answers `503`; notes, links, PDFs and search work. |
 
 Put them in `.env`, then:
@@ -147,7 +149,7 @@ docker compose exec worker python -m mind_dump.check_models       # OK per provi
 docker compose exec worker python -m mind_dump.embed_missing      # embed what was saved before
 ```
 
-Run `embed_missing` again after changing `EMBEDDING_MODEL`: vectors from two models can't be compared. When keys are set, item text goes to Voyage AI, and images, questions and the passages the agent reads go to Anthropic.
+Run `embed_missing` again after changing `EMBEDDING_MODEL` or `EMBEDDING_PROVIDER`: vectors from two models can't be compared, so the chunks are embedded again in place. When keys are set, item text goes to OpenAI (or Voyage AI, if chosen), and images, questions and the passages the agent reads go to Anthropic.
 
 Right-click the panel to quit. The app is unsigned (see `docs/decisions/`), so build it from source.
 

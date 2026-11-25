@@ -1,7 +1,7 @@
 """M3 stage 2 through the worker: files become text (D7b), every chunk gets a vector (D8).
 
 No network anywhere: the website is a mock transport, the embedder and the describer are
-fakes (or the real Voyage client on a mock transport), and the clock is fake.
+fakes (or the real OpenAI and Voyage clients on a mock transport), and the clock is fake.
 """
 
 import json
@@ -34,8 +34,15 @@ from test_worker import (
 )
 
 from mind_dump import embed_missing, jobs
+from mind_dump import search as search_mod
 from mind_dump.describe import FakeDescriber
-from mind_dump.embeddings import DIMENSIONS, FakeEmbedder, VoyageEmbedder, fake_vector
+from mind_dump.embeddings import (
+    DIMENSIONS,
+    FakeEmbedder,
+    OpenAIEmbedder,
+    VoyageEmbedder,
+    fake_vector,
+)
 from mind_dump.fetcher import make_client
 from mind_dump.storage import LocalStorage
 from mind_dump.uploads import file_key
@@ -342,59 +349,108 @@ def test_rerunning_an_unchanged_note_pdf_or_image_makes_no_model_call(
     assert {i: chunk_rows(conn, i) for i in (note, pdf, image)} == before
 
 
-# ---------- B6: embedding failures, with the real Voyage client on a mock transport ----------
+# ---------- B6: embedding failures, with the real clients on a mock transport ----------
 
 
-class FakeVoyage:
-    """Answers like api.voyageai.com, or with a failure."""
+class FakeProvider:
+    """Answers like api.openai.com or api.voyageai.com (both send data[].index and
+    data[].embedding), or with a failure. Each vector is the fake vector of the text
+    under the requested model, so a test can tell which model made a stored vector."""
 
     def __init__(self) -> None:
         self.failure: httpx2.Response | Exception | None = None
-        self.requests = 0
+        self.requests: list[dict] = []
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
-        self.requests += 1
+        self.requests.append(json.loads(request.content))
         if isinstance(self.failure, Exception):
             raise self.failure
         if self.failure is not None:
             return self.failure
-        body = json.loads(request.content)
+        body = self.requests[-1]
         data = [
             {"object": "embedding", "embedding": fake_vector(t, body["model"]), "index": i}
             for i, t in enumerate(body["input"])
-        ]
+        ][::-1]  # out of order: the client reads by index
+        n = len(body["input"])
         return httpx2.Response(
-            200, json={"object": "list", "data": data, "model": body["model"], "usage": {}}
-        )
+            200,
+            json={"object": "list", "data": data, "model": body["model"],
+                  "usage": {"prompt_tokens": n, "total_tokens": n}},
+        )  # fmt: skip
+
+
+# provider -> (client, default model, the label in messages, the key it names)
+PROVIDERS = {
+    "openai": (OpenAIEmbedder, "text-embedding-3-small", "OpenAI", "OPENAI_API_KEY"),
+    "voyage": (VoyageEmbedder, "voyage-4", "Voyage AI", "VOYAGE_API_KEY"),
+}
 
 
 @pytest.fixture
-def voyage(worker: Worker) -> Iterator[FakeVoyage]:
-    fake = FakeVoyage()
+def http_fake() -> Iterator[tuple[FakeProvider, httpx2.Client]]:
+    fake = FakeProvider()
     with httpx2.Client(transport=httpx2.MockTransport(fake.handle)) as http:
-        worker.embedder = VoyageEmbedder("test-key", "voyage-4", http=http)
-        yield fake
+        yield fake, http
 
 
-VOYAGE_TEMPORARY = {
-    "429": lambda: httpx2.Response(429, json={"detail": "slow down"}),
+@pytest.fixture(params=list(PROVIDERS))
+def provider(
+    request: pytest.FixtureRequest, worker: Worker, http_fake: tuple[FakeProvider, httpx2.Client]
+) -> tuple[str, FakeProvider]:
+    """The worker with a real client (OpenAI, then Voyage) on the fake API."""
+    name = request.param
+    cls, model, _, _ = PROVIDERS[name]
+    fake, http = http_fake
+    worker.embedder = cls("test-key", model, http=http)
+    return name, fake
+
+
+TEMPORARY = {
+    "429": lambda: httpx2.Response(429, json={"error": {"message": "slow down"}}),
     "503": lambda: httpx2.Response(503, text="busy"),
     "timeout": lambda: httpx2.ReadTimeout("read timed out"),
 }
 
 
-@pytest.mark.parametrize("failure", VOYAGE_TEMPORARY)
-def test_temporary_embedding_failures_retry_and_keep_the_old_chunks(
-    failure: str, conn: Conn, worker: Worker, voyage: FakeVoyage, clock: FakeClock
+def test_openai_embeds_a_note_through_the_worker(
+    client: TestClient, conn: Conn, worker: Worker, http_fake: tuple[FakeProvider, httpx2.Client]
 ) -> None:
+    fake, http = http_fake
+    worker.embedder = OpenAIEmbedder("test-key", "text-embedding-3-small", http=http)
+    item_id = save_note(conn, paragraphs(3, "note"))
+
+    worker.run_once()
+
+    assert latest_job(conn, item_id)["status"] == "done"
+    assert client.get(f"/items/{item_id}").json()["status"] == "ready"
+    rows = vectors(conn, item_id)
+    assert len(rows) == 3
+    for row in rows:
+        assert row["dims"] == DIMENSIONS == 1024
+        assert row["embedding_model"] == "text-embedding-3-small"
+        assert_vector_of(row, "text-embedding-3-small")  # each vector is its own chunk's
+    assert fake.requests[0]["dimensions"] == 1024 and "input_type" not in fake.requests[0]
+
+
+@pytest.mark.parametrize("failure", TEMPORARY)
+def test_temporary_embedding_failures_retry_and_keep_the_old_chunks(
+    failure: str,
+    conn: Conn,
+    worker: Worker,
+    provider: tuple[str, FakeProvider],
+    clock: FakeClock,
+) -> None:
+    name, fake = provider
+    _, model, label, _ = PROVIDERS[name]
     item_id = save_note(conn, paragraphs(3, "old"))
     worker.run_once()
     before = chunk_rows(conn, item_id)
-    assert len(before) == 3 and all(r["embedding_model"] == "voyage-4" for r in before)
+    assert len(before) == 3 and all(r["embedding_model"] == model for r in before)
 
     conn.execute("UPDATE items SET body = %s WHERE id = %s", (paragraphs(2, "new"), item_id))
     jobs.enqueue(conn, item_id)
-    voyage.failure = VOYAGE_TEMPORARY[failure]()
+    fake.failure = TEMPORARY[failure]()
     for wait, status in (
         (timedelta(0), "failed"),
         (timedelta(minutes=1), "failed"),
@@ -405,27 +461,74 @@ def test_temporary_embedding_failures_retry_and_keep_the_old_chunks(
         job = latest_job(conn, item_id)
         assert job["status"] == status  # D35's schedule: 1 minute, 5 minutes, then dead
         assert chunk_rows(conn, item_id) == before  # old chunks and vectors untouched
-    assert "Voyage AI" in job["error"] and job["attempts"] == 3
+    assert label in job["error"] and job["attempts"] == 3
 
-    voyage.failure = None  # Voyage is back: a re-run replaces the set, vectors and all
+    fake.failure = None  # the API is back: a re-run replaces the set, vectors and all
     jobs.enqueue(conn, item_id)
     worker.run_once()
     assert [r["text"][:3] for r in chunk_rows(conn, item_id)] == ["new", "new"]
 
 
-def test_a_401_from_voyage_is_dead_at_once_naming_the_key(
-    conn: Conn, worker: Worker, voyage: FakeVoyage
+def test_a_401_is_dead_at_once_naming_the_providers_key(
+    conn: Conn, worker: Worker, provider: tuple[str, FakeProvider]
 ) -> None:
-    voyage.failure = httpx2.Response(401, json={"detail": "Provided API key is invalid."})
+    name, fake = provider
+    _, _, _, key = PROVIDERS[name]
+    other = "VOYAGE_API_KEY" if key == "OPENAI_API_KEY" else "OPENAI_API_KEY"
+    fake.failure = httpx2.Response(401, json={"error": {"message": "Incorrect API key."}})
     item_id = save_note(conn, "Buy oat milk")
 
     worker.run_once()
 
     job = latest_job(conn, item_id)
     assert (job["status"], job["attempts"]) == ("dead", 1)
-    assert "VOYAGE_API_KEY" in job["error"] and "401" in job["error"]
+    assert key in job["error"] and "401" in job["error"]
+    assert other not in job["error"]
     assert chunk_rows(conn, item_id) == []
-    assert voyage.requests == 1
+    assert len(fake.requests) == 1
+
+
+def test_switching_provider_re_embeds_the_same_rows(
+    conn: Conn,
+    worker: Worker,
+    http_fake: tuple[FakeProvider, httpx2.Client],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """D8: a provider change is a model change. Chunks embedded by voyage-4 are never
+    compared with an OpenAI query vector; embed_missing finds them; the worker embeds the
+    same rows again in place."""
+    fake, http = http_fake
+    worker.embedder = VoyageEmbedder("test-key", "voyage-4", http=http)
+    text = "Mangroves store carbon along the coast."
+    item_id = save_note(conn, text)
+    worker.run_once()
+    ids = [r["id"] for r in vectors(conn, item_id)]
+    assert {r["embedding_model"] for r in vectors(conn, item_id)} == {"voyage-4"}
+
+    openai = OpenAIEmbedder("test-key", "text-embedding-3-small", http=http)
+    result = search_mod.search(conn, text, "vector", embedder=openai)
+    assert result.hits == []  # voyage-4 vectors are not compared with an OpenAI query
+
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy-key-for-the-command")  # never sent anywhere
+    assert embed_missing.main([]) == 0  # the default provider: OpenAI
+    out = capsys.readouterr().out
+    assert "1 chunk(s) in 1 item(s) have no vector from text-embedding-3-small" in out
+    assert "queued 1 embed job(s)" in out
+    worker.embedder = openai
+    worker.run_once()
+
+    assert latest_job(conn, item_id)["kind"] == "embed"
+    assert latest_job(conn, item_id)["status"] == "done"
+    rows = vectors(conn, item_id)
+    assert [r["id"] for r in rows] == ids  # the same rows...
+    for row in rows:  # ...with OpenAI vectors and the new model's name
+        assert row["embedding_model"] == "text-embedding-3-small"
+        assert_vector_of(row, "text-embedding-3-small")
+    found = search_mod.search(conn, text, "vector", embedder=openai)
+    assert [h.chunk_id for h in found.hits] == ids  # now compared, and found
+    assert embed_missing.main([]) == 0
+    assert "0 chunk(s) in 0 item(s)" in capsys.readouterr().out
 
 
 # ---------- B7: no network inside the transaction ----------
@@ -497,7 +600,7 @@ def test_without_an_embedder_chunks_are_saved_and_catch_up_keeps_their_ids(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    worker.embedder = None  # no VOYAGE_API_KEY
+    worker.embedder = None  # no OPENAI_API_KEY (the default provider)
     note = save_note(conn, paragraphs(2, "note"))
     link = save_link(conn)
     pdf = upload(client, make_pdf(PDF_PAGES), "report.pdf")
@@ -512,9 +615,10 @@ def test_without_an_embedder_chunks_are_saved_and_catch_up_keeps_their_ids(
 
     # Without the key, the command refuses to queue jobs that could not embed.
     assert embed_missing.main([]) == 1
-    assert "VOYAGE_API_KEY is not set" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "OPENAI_API_KEY is not set" in out and "VOYAGE_API_KEY" not in out
 
-    monkeypatch.setenv("VOYAGE_API_KEY", "dummy-key-for-the-command")  # never sent anywhere
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy-key-for-the-command")  # never sent anywhere
     monkeypatch.setenv("EMBEDDING_MODEL", "fake-embedder")
     assert embed_missing.main([]) == 0
     assert "queued 3 embed job(s)" in capsys.readouterr().out
@@ -542,7 +646,7 @@ def test_a_new_embedding_model_re_embeds_existing_chunks(
     ids = [r["id"] for r in vectors(conn, item_id)]
     assert {r["embedding_model"] for r in vectors(conn, item_id)} == {"fake-embedder"}
 
-    monkeypatch.setenv("VOYAGE_API_KEY", "dummy-key-for-the-command")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy-key-for-the-command")
     monkeypatch.setenv("EMBEDDING_MODEL", "fake-embedder-2")
     assert embed_missing.main(["--dry-run"]) == 0
     assert latest_job(conn, item_id)["kind"] == "process"  # dry run: nothing queued
@@ -555,6 +659,49 @@ def test_a_new_embedding_model_re_embeds_existing_chunks(
     for row in rows:
         assert row["embedding_model"] == "fake-embedder-2"
         assert_vector_of(row, "fake-embedder-2")
+
+
+def test_embed_missing_names_the_configured_providers_key(
+    conn: Conn,
+    worker: Worker,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    worker.embedder = None
+    save_note(conn, "Buy oat milk")
+    worker.run_once()
+
+    monkeypatch.setenv("VOYAGE_API_KEY", "dummy")  # not the configured provider's key
+    assert embed_missing.main([]) == 1
+    out = capsys.readouterr().out
+    assert "OPENAI_API_KEY is not set" in out and "VOYAGE_API_KEY" not in out
+
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "voyage")
+    monkeypatch.delenv("VOYAGE_API_KEY")
+    monkeypatch.setenv("OPENAI_API_KEY", "dummy")  # now the other provider's key
+    assert embed_missing.main([]) == 1
+    out = capsys.readouterr().out
+    assert "VOYAGE_API_KEY is not set" in out and "OPENAI_API_KEY" not in out
+    assert "no vector from voyage-4" in out
+
+
+@pytest.mark.parametrize(("provider", "key"), [("openai", "OPENAI_API_KEY"),
+                                               ("voyage", "VOYAGE_API_KEY")])  # fmt: skip
+def test_the_no_embedder_log_line_names_the_providers_key(
+    provider: str, key: str, conn: Conn, worker: Worker, caplog: pytest.LogCaptureFixture
+) -> None:
+    from mind_dump.config import Settings
+    from mind_dump.embeddings import no_embedder_reason
+
+    cfg = Settings(database_url="x", migrations_dir=".", embedding_provider=provider)  # type: ignore[arg-type]
+    worker.embedder = None
+    worker.no_embedder = no_embedder_reason(cfg)
+    save_note(conn, "Buy oat milk")
+    with caplog.at_level("INFO", logger="mind_dump.worker"):
+        worker.run_once()
+    line = next(r.getMessage() for r in caplog.records if "without vectors" in r.getMessage())
+    assert key in line
+    assert ("VOYAGE_API_KEY" if key == "OPENAI_API_KEY" else "OPENAI_API_KEY") not in line
 
 
 # ---------- B10: stage 1's crash guarantee, with vectors and a PDF ----------

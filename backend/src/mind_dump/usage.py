@@ -26,7 +26,7 @@ from decimal import Decimal
 from psycopg import Connection
 from psycopg.rows import DictRow
 
-from mind_dump.config import Price, Settings
+from mind_dump.config import EMBEDDING_PROVIDERS, Price, Settings
 
 Conn = Connection[DictRow]
 MILLION = Decimal(1_000_000)
@@ -40,7 +40,7 @@ class Usage:
     """One model call's token counts (D39). purpose: answer, judge, describe, check,
     embed_documents or embed_query."""
 
-    provider: str  # anthropic, voyage, fake
+    provider: str  # anthropic, openai, voyage, fake
     model: str  # the model that served the call (a refusal fallback can change it)
     purpose: str
     input_tokens: int = 0
@@ -55,12 +55,14 @@ UsageSink = Callable[[Usage], int | None]
 
 def price_for(usage: Usage, settings: Settings) -> Price:
     """The table's price for this model. An unknown Claude model gets the most expensive
-    Claude price in the table, so the estimate errs toward the cap; an unknown Voyage
-    model gets VOYAGE_PRICE_PER_MTOK; anything else (the test fakes) costs nothing."""
+    Claude price in the table, so the estimate errs toward the cap. An embedding call
+    (OpenAI or Voyage) gets EMBEDDING_PRICE_PER_MTOK if set, else its model's price in
+    config.DEFAULT_EMBEDDING_PRICES, else that table's dearest price (also toward the
+    cap). Anything else (the test fakes) costs nothing."""
     if usage.model in settings.model_prices:
         return settings.model_prices[usage.model]
-    if usage.provider == "voyage":
-        return Price(input=settings.voyage_price_per_mtok)
+    if usage.provider in EMBEDDING_PROVIDERS:
+        return Price(input=settings.embedding_price(usage.model))
     if usage.provider == "anthropic":
         claude = [p for m, p in settings.model_prices.items() if m.startswith("claude-")]
         if claude:

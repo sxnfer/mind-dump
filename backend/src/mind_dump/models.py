@@ -97,12 +97,13 @@ class Job(BaseModel):
 class Chunk(BaseModel):
     """One passage of an item's text (D36). text == source_text[start_char:end_char]."""
 
+    chunk_id: int  # the id search hits and citations carry
     index: int  # 0, 1, 2, ... in reading order
     start_char: int
     end_char: int
     text: str
     page: int | None = None  # PDFs: the 1-based page it sits on (chunks never cross pages)
-    embedded: bool = False  # has a vector (D8); False while no VOYAGE_API_KEY is set
+    embedded: bool = False  # has a vector (D8); False while no embedding key is set
     embedding_model: str | None = None  # which model made the vector
 
 

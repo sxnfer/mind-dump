@@ -7,10 +7,14 @@ x-database-url: &database-url
   DATABASE_URL: postgresql://mind_dump:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}@db:5432/mind_dump
 
 # D8: the owner's model keys and model names. All optional (`:-` allows empty): with no
-# VOYAGE_API_KEY chunks are saved without vectors; with no ANTHROPIC_API_KEY images can't
-# be described (nor questions answered). Empty values mean the defaults (voyage-4,
-# claude-opus-5-5; M5's answer and cost settings in .env.example, D9 and D39).
+# key for EMBEDDING_PROVIDER (openai by default: OPENAI_API_KEY; or voyage:
+# VOYAGE_API_KEY) chunks are saved without vectors; with no ANTHROPIC_API_KEY images
+# can't be described (nor questions answered). Empty values mean the defaults (openai,
+# text-embedding-3-small, claude-opus-5-5; M5's answer and cost settings in
+# .env.example, D9 and D39).
 x-models: &models
+  EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
@@ -19,7 +23,7 @@ x-models: &models
   AGENT_MAX_TURNS: ${AGENT_MAX_TURNS:-}
   DAILY_COST_CAP_USD: ${DAILY_COST_CAP_USD:-}
   ASK_RATE_PER_MINUTE: ${ASK_RATE_PER_MINUTE:-}
-  VOYAGE_PRICE_PER_MTOK: ${VOYAGE_PRICE_PER_MTOK:-}
+  EMBEDDING_PRICE_PER_MTOK: ${EMBEDDING_PRICE_PER_MTOK:-}
   MODEL_PRICES: ${MODEL_PRICES:-}
 
 services:

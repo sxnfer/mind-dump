@@ -24,7 +24,7 @@ from test_worker import save_note
 
 from mind_dump.config import Price, _prices
 from mind_dump.describe import ClaudeDescriber, FakeDescriber
-from mind_dump.embeddings import FakeEmbedder, VoyageEmbedder
+from mind_dump.embeddings import FakeEmbedder, OpenAIEmbedder, VoyageEmbedder
 from mind_dump.usage import (
     LimitExceeded,
     Usage,
@@ -53,7 +53,7 @@ def test_cost_estimates_from_the_price_table() -> None:
     unknown = Usage("anthropic", "claude-something-new", "answer", 1_000_000)
     assert estimate_cost(unknown, cfg) == Decimal("10.000000")
     voyage = Usage("voyage", "voyage-4", "embed_documents", 2_000_000)
-    assert estimate_cost(voyage, settings(voyage_price_per_mtok=Decimal("0.5"))) == Decimal("1")
+    assert estimate_cost(voyage, settings(embedding_price_per_mtok=Decimal("0.5"))) == Decimal("1")
     assert estimate_cost(Usage("fake", "fake-llm", "answer", 10**9), cfg) == 0
 
 
@@ -100,13 +100,67 @@ def test_the_worker_s_embedding_and_description_calls_count_toward_the_cap(
     check_cost_cap(conn, settings(daily_cost_cap_usd=Decimal("100")))  # under: no error
 
 
+def test_embedding_prices_per_model_with_the_setting_on_top() -> None:
+    """D39: each embedding model's default price; EMBEDDING_PRICE_PER_MTOK overrides; an
+    unknown embedding model is priced at the dearest entry, never at zero."""
+    cfg = settings()
+    million = 1_000_000
+    for provider, model, price in (
+        ("openai", "text-embedding-3-small", "0.02"),
+        ("openai", "text-embedding-3-large", "0.13"),
+        ("voyage", "voyage-4", "0.06"),
+        ("openai", "text-embedding-4-new", "0.13"),  # unknown: the dearest in the table
+        ("voyage", "voyage-5-new", "0.13"),
+    ):
+        usage = Usage(provider, model, "embed_documents", million)
+        assert estimate_cost(usage, cfg) == Decimal(price), model
+    override = settings(embedding_price_per_mtok=Decimal("0.5"))
+    for provider, model in (("openai", "text-embedding-3-small"), ("voyage", "unknown")):
+        assert estimate_cost(Usage(provider, model, "embed_query", million), override) == 0.5
+    assert estimate_cost(Usage("fake", "fake-embedder", "embed_query", million), cfg) == 0
+
+
+def test_the_price_setting_is_read_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mind_dump.config import load_settings
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://x")
+    assert load_settings().embedding_price_per_mtok is None  # unset: the table
+    monkeypatch.setenv("EMBEDDING_PRICE_PER_MTOK", "0.25")
+    assert load_settings().embedding_price_per_mtok == Decimal("0.25")
+    monkeypatch.setenv("EMBEDDING_PRICE_PER_MTOK", "cheap")
+    with pytest.raises(RuntimeError, match="EMBEDDING_PRICE_PER_MTOK"):
+        load_settings()
+
+
+def test_openai_reports_its_own_token_counts(conn: Conn) -> None:
+    def answer(request: httpx2.Request) -> httpx2.Response:
+        n = len(json.loads(request.content)["input"])
+        data = [{"index": i, "embedding": [0.0] * 1024} for i in range(n)]
+        usage = {"prompt_tokens": 50_000 * n, "total_tokens": 50_000 * n}
+        return httpx2.Response(200, json={"data": data, "usage": usage})
+
+    record = UsageRecorder.for_connection(conn, settings())  # the default price table
+    http = httpx2.Client(transport=httpx2.MockTransport(answer))
+    openai = OpenAIEmbedder("key", "text-embedding-3-small", http=http, on_usage=record)
+    openai.embed_documents(["a", "b", "c"])
+    openai.embed_query("q")
+    got = [(r["provider"], r["purpose"], r["input_tokens"], r["cost_usd"]) for r in rows(conn)]
+    # text-embedding-3-small's default price, $0.02 per million tokens.
+    assert got == [
+        ("openai", "embed_documents", 150_000, Decimal("0.003000")),
+        ("openai", "embed_query", 50_000, Decimal("0.001000")),
+    ]
+
+
 def test_voyage_reports_its_own_token_counts(conn: Conn) -> None:
     def answer(request: httpx2.Request) -> httpx2.Response:
         n = len(json.loads(request.content)["input"])
         data = [{"index": i, "embedding": [0.0] * 1024} for i in range(n)]
         return httpx2.Response(200, json={"data": data, "usage": {"total_tokens": 7 * n}})
 
-    cfg = settings(voyage_price_per_mtok=Decimal("1000"))  # a round price, not the default
+    cfg = settings(embedding_price_per_mtok=Decimal("1000"))  # a round price, not the default
     record = UsageRecorder.for_connection(conn, cfg)
     http = httpx2.Client(transport=httpx2.MockTransport(answer))
     voyage = VoyageEmbedder("key", "voyage-4", http=http, batch_size=2, on_usage=record)
@@ -114,7 +168,7 @@ def test_voyage_reports_its_own_token_counts(conn: Conn) -> None:
     voyage.embed_query("q")
     got = [(r["purpose"], r["input_tokens"]) for r in rows(conn)]
     assert got == [("embed_documents", 14), ("embed_documents", 7), ("embed_query", 7)]
-    # VOYAGE_PRICE_PER_MTOK applies: 7 tokens x $1000/M.
+    # EMBEDDING_PRICE_PER_MTOK applies: 7 tokens x $1000/M.
     assert rows(conn)[-1]["cost_usd"] == Decimal("0.007000")
 
 

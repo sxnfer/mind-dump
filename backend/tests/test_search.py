@@ -8,6 +8,7 @@ the real worker.
 
 import math
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from fractions import Fraction
 
@@ -30,6 +31,7 @@ from mind_dump.search import (
     SearchUnavailable,
     is_strict,
     keyword_params,
+    keyword_search,
     rrf,
     search,
     vector_params,
@@ -113,20 +115,20 @@ def ids(result) -> list[int]:
 
 
 class FailingEmbedder:
-    """Embeds nothing: every query call fails the way a 503 from Voyage does (D35)."""
+    """Embeds nothing: every query call fails the way a 503 from OpenAI does (D35)."""
 
     model = MODEL
 
     def embed_documents(self, texts: list[str]) -> list[Vector]:
-        raise TemporaryError("Voyage AI answered HTTP 503 Service Unavailable")
+        raise TemporaryError("OpenAI answered HTTP 503 Service Unavailable")
 
     def embed_query(self, text: str) -> Vector:
-        raise TemporaryError("Voyage AI answered HTTP 503 Service Unavailable")
+        raise TemporaryError("OpenAI answered HTTP 503 Service Unavailable")
 
 
 @pytest.fixture
 def fake_client(client: TestClient) -> TestClient:
-    """The API with the fake embedder, as if VOYAGE_API_KEY were set."""
+    """The API with the fake embedder, as if OPENAI_API_KEY were set."""
     client.app.state.embedder = FakeEmbedder()
     return client
 
@@ -233,7 +235,7 @@ def test_which_queries_are_strict(query: str, strict: bool) -> None:
 
 
 @pytest.mark.parametrize("mode", ["keyword", "hybrid"])
-def test_filters_apply_to_both_keyword_tiers(conn: Conn, mode: str) -> None:
+def test_filters_apply_to_the_keyword_list_in_both_modes(conn: Conn, mode: str) -> None:
     all_note = add_item(conn, "note")
     all_link = add_item(conn, "link")
     some_note = add_item(conn, "note")
@@ -243,10 +245,12 @@ def test_filters_apply_to_both_keyword_tiers(conn: Conn, mode: str) -> None:
     add_chunk(conn, some_note, "Renewal is not automatic.", vector=None)
     add_chunk(conn, some_link, "A renewed baseline.", vector=None)
     result = search(
-        conn, "How many times are crediting periods renewed?", mode, Filters(type="note"),
+        conn, "crediting periods renewed", mode, Filters(type="note"),
         embedder=FakeEmbedder(),
     )  # fmt: skip
-    assert [h.item_id for h in result.hits if h.keyword_rank] == [all_note, some_note]
+    # Keyword mode: all words, then any word. Hybrid feeds the merge all words only (D37).
+    expected = [all_note, some_note] if mode == "keyword" else [all_note]
+    assert [h.item_id for h in result.hits if h.keyword_rank] == expected
 
 
 # ---------- C2: vector ----------
@@ -355,6 +359,127 @@ def test_a_chunk_in_both_lists_beats_chunks_ranked_high_in_only_one(conn: Conn) 
     assert set(singles) == {words_only, meaning_only}
     assert singles[words_only].keyword_rank == 1 and singles[words_only].vector_rank is None
     assert singles[meaning_only].vector_rank == 1 and singles[meaning_only].keyword_rank is None
+
+
+# ---------- C3b: what hybrid's keyword list feeds the merge (D37, amended) ----------
+
+OFFSETS = "Why do some schemes earn fewer offsets when their window comes up?"
+
+
+def offsets_set(conn: Conn) -> tuple[int, int]:
+    """The Q11 pattern: the right chunk shares no word with the question but is the
+    nearest vector; a distractor shares one ordinary word ("offsets") and is only the
+    second-nearest vector. Returns (right, distractor)."""
+    q = fake_vector(OFFSETS, MODEL)
+    item = add_item(conn)
+    right = add_chunk(conn, item, "Renewal resets the baseline, so crediting drops.", vector=q)
+    distractor = add_chunk(conn, item, "Offsets are tracked in a registry.", near(q, "d", 1.5))
+    for i in range(4):
+        add_chunk(conn, item, f"Unrelated note number {i}.")
+    return right, distractor
+
+
+def test_hybrid_leaves_any_word_only_rows_out_of_the_merge(conn: Conn) -> None:
+    right, distractor = offsets_set(conn)
+
+    result = search(conn, OFFSETS, "hybrid", embedder=FakeEmbedder())
+
+    assert result.hits[0].chunk_id == right  # it used to lose to the distractor
+    hit = {h.chunk_id: h for h in result.hits}
+    assert hit[distractor].vector_rank == 2 and hit[distractor].keyword_rank is None
+    assert all(h.keyword_rank is None for h in result.hits)  # no exact evidence here
+    # The keyword list on its own still finds the distractor by its one word.
+    assert ids(search(conn, OFFSETS, "keyword")) == [distractor]
+
+
+def test_keyword_mode_and_the_no_embedder_fallback_keep_any_word_matches(conn: Conn) -> None:
+    _, distractor = offsets_set(conn)
+    fallback = search(conn, OFFSETS, "hybrid", embedder=None)
+    assert (fallback.mode, fallback.degraded) == ("keyword", True)
+    assert ids(fallback) == [distractor]
+    failing = search(conn, OFFSETS, "hybrid", embedder=FailingEmbedder())
+    assert failing.mode == "keyword" and ids(failing) == [distractor]
+
+
+def test_hybrid_keeps_the_boost_for_a_chunk_with_every_word(conn: Conn) -> None:
+    query = "mangrove survival"
+    q = fake_vector(query, MODEL)
+    item = add_item(conn)
+    nearest = add_chunk(conn, item, "Seedlings lived longer after the rains.", vector=q)
+    add_chunk(conn, item, "Coastal seedlings were counted.", near(q, "b", 0.5))
+    every = add_chunk(conn, item, "Mangrove survival rose to seventy percent.", near(q, "c", 0.9))
+    some = add_chunk(conn, item, "Mangrove planting began in March.", near(q, "e", 3.0))
+
+    result = search(conn, query, "hybrid", embedder=FakeEmbedder())
+
+    assert [h.chunk_id for h in result.hits[:2]] == [every, nearest]
+    hit = {h.chunk_id: h for h in result.hits}
+    assert (hit[every].keyword_rank, hit[every].vector_rank) == (1, 3)
+    assert hit[some].keyword_rank is None  # one word of two: not exact evidence
+
+
+def test_a_typed_code_feeds_the_merge_even_when_a_word_is_missing(conn: Conn) -> None:
+    """The Q3 pattern: "many" and "went" are in no chunk, so the all-words tier is empty;
+    the code MD-2291 still puts its chunk in hybrid's keyword list, and only it."""
+    item = add_item(conn)
+    coded = add_chunk(conn, item, "Project MD-2291 sent 2,770 credits to the buffer pool.")
+    words = add_chunk(conn, item, "Each project sends credits to the buffer pool.")
+    question = "How many credits from project MD-2291 went to the buffer pool?"
+
+    hybrid = keyword_search(conn, question, Filters(), 50, hybrid=True)
+    assert [r.chunk_id for r in hybrid] == [coded]
+    assert [r.chunk_id for r in keyword_search(conn, question, Filters(), 50)] == [coded, words]
+    hit = {h.chunk_id: h for h in search(conn, question, "hybrid", embedder=FakeEmbedder()).hits}
+    assert hit[coded].keyword_rank == 1 and hit[words].keyword_rank is None
+    # A bare code behaves as before: its chunk, first, in both modes.
+    for mode in ("keyword", "hybrid"):
+        assert ids(search(conn, "MD-2291", mode, embedder=FakeEmbedder()))[0] == coded
+
+
+@pytest.mark.parametrize(
+    "query", ["Why is the sky blue?", "the of and", "!!!", '"buffer pool" mangrove']
+)
+def test_hybrid_with_no_exact_evidence_has_an_empty_keyword_list(conn: Conn, query: str) -> None:
+    item = add_item(conn)
+    add_chunk(conn, item, "The sky over the buffer pool.", vector=None)
+    add_chunk(conn, item, "Blue carbon in the buffer pool.", vector=None)
+    assert keyword_search(conn, query, Filters(), 50, hybrid=True) == []
+    result = search(conn, query, "hybrid", embedder=FakeEmbedder())
+    assert result.hits == [] and not result.degraded
+
+
+def test_filters_apply_to_a_typed_code_in_hybrid(conn: Conn) -> None:
+    note, link = add_item(conn, "note"), add_item(conn, "link")
+    in_note = add_chunk(conn, note, "Alert DQ-117 fired at night.", vector=None)
+    add_chunk(conn, link, "Alert DQ-117 fired again.", vector=None)
+    question = "What does alert DQ-117 mean?"  # "mean" is in no chunk: codes only
+    rows = keyword_search(conn, question, Filters(type="note"), 50, hybrid=True)
+    assert [r.chunk_id for r in rows] == [in_note]
+
+
+def test_strict_results_are_ranked_by_the_strict_query(conn: Conn) -> None:
+    """A strict query's score is ts_rank against the query as written, not its any-word
+    form (which turns -fire into an OR branch). Which rows come back is unchanged."""
+    item = add_item(conn)
+    once = add_chunk(conn, item, "Buffer pool rules.")
+    often = add_chunk(conn, item, "The buffer pool holds buffer credits and pool credits.")
+    add_chunk(conn, item, "The buffer pool burned in a fire.")
+    add_chunk(conn, item, "Only a pool.")
+    query = "buffer pool -fire"
+    for mode in ("keyword", "hybrid"):
+        hits = search(conn, query, mode, embedder=None if mode == "keyword" else FakeEmbedder())
+        kw = sorted((h for h in hits.hits if h.keyword_rank), key=lambda h: h.keyword_rank)
+        assert [h.chunk_id for h in kw] == [often, once]
+        expected = {
+            r["id"]: r["score"]
+            for r in conn.execute(
+                "SELECT id, ts_rank(text_tsv, websearch_to_tsquery('english', %s)) AS score"
+                " FROM chunks WHERE id = ANY(%s)",
+                (query, [often, once]),
+            ).fetchall()
+        }
+        for h in kw:
+            assert h.keyword_score == pytest.approx(expected[h.chunk_id], rel=1e-6)
 
 
 # ---------- C4: filters ----------
@@ -506,14 +631,17 @@ def test_a_selective_filter_through_the_api(
 def test_no_embedder_hybrid_gives_keyword_results_and_says_so(
     client: TestClient, conn: Conn
 ) -> None:
-    assert client.app.state.embedder is None  # tests run with no VOYAGE_API_KEY
+    assert client.app.state.embedder is None  # tests run with no OPENAI_API_KEY
     item = add_item(conn)
     chunk = add_chunk(conn, item, "The registry tracks every credit.", vector=None)
     body = client.get("/search", params={"q": "registry"}).json()
     assert body["requested_mode"] == "hybrid"
     assert body["mode"] == "keyword"
     assert body["degraded"] is True
-    assert "VOYAGE_API_KEY" in body["notice"]
+    assert body["notice"] == (
+        "Search by meaning is off because OPENAI_API_KEY is not set for "
+        "EMBEDDING_PROVIDER=openai, so these are keyword results only."
+    )  # one plain sentence, no brackets
     assert [h["chunk_id"] for h in body["hits"]] == [chunk]
     assert body["hits"][0]["keyword_rank"] == 1
 
@@ -528,7 +656,21 @@ def test_no_embedder_vector_mode_is_a_clear_error(client: TestClient, conn: Conn
     add_chunk(conn, add_item(conn), "The registry tracks every credit.")
     response = client.get("/search", params={"q": "registry", "mode": "vector"})
     assert response.status_code == 503
-    assert "VOYAGE_API_KEY" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "OPENAI_API_KEY" in detail and "VOYAGE_API_KEY" not in detail
+
+
+def test_with_voyage_configured_the_messages_name_its_key(client: TestClient, conn: Conn) -> None:
+    client.app.state.settings = replace(
+        client.app.state.settings, embedding_provider="voyage", embedding_model="voyage-4"
+    )
+    add_chunk(conn, add_item(conn), "The registry tracks every credit.", vector=None)
+    notice = client.get("/search", params={"q": "registry"}).json()["notice"]
+    assert "VOYAGE_API_KEY" in notice and "OPENAI_API_KEY" not in notice
+    response = client.get("/search", params={"q": "registry", "mode": "vector"})
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert "VOYAGE_API_KEY" in detail and "OPENAI_API_KEY" not in detail
 
 
 def test_a_failing_embedder_degrades_hybrid_to_keyword(client: TestClient, conn: Conn) -> None:
@@ -697,9 +839,20 @@ def test_the_keyword_query_uses_the_gin_index(conn: Conn, many_chunks: None) -> 
 
 
 @pytest.mark.parametrize("query", ["word7 word8 nowhere", '"word7 word8"', "word7 -word8"])
-def test_both_keyword_tiers_use_the_gin_index(conn: Conn, many_chunks: None, query: str) -> None:
+@pytest.mark.parametrize("hybrid", [False, True], ids=["keyword", "hybrid"])
+def test_every_keyword_form_uses_the_gin_index(
+    conn: Conn, many_chunks: None, query: str, hybrid: bool
+) -> None:
     conn.execute("SET enable_seqscan = off")
-    text = plan(conn, KEYWORD_SQL, keyword_params(query, Filters(type="note"), 50))
+    text = plan(conn, KEYWORD_SQL, keyword_params(query, Filters(type="note"), 50, hybrid))
+    assert "chunks_text_tsv_idx" in text, text
+
+
+def test_a_typed_code_in_hybrid_uses_the_gin_index(conn: Conn, many_chunks: None) -> None:
+    conn.execute("SET enable_seqscan = off")
+    params = keyword_params("How many chunk MD-2291 word7?", Filters(), 50, hybrid=True)
+    assert params["form"] == "codes"
+    text = plan(conn, KEYWORD_SQL, params)
     assert "chunks_text_tsv_idx" in text, text
 
 

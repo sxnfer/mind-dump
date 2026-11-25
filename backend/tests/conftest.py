@@ -59,13 +59,36 @@ def _ensure_test_database(url: str) -> None:
             admin.execute(f'CREATE DATABASE "{_TEST_DB}"')  # noqa: S608 (constant name)
 
 
+# Every model key and the settings that choose a provider or a model (D8). A test that
+# wants one sets it with monkeypatch.
+MODEL_SETTINGS = (
+    "OPENAI_API_KEY",
+    "VOYAGE_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "EMBEDDING_PROVIDER",
+    "EMBEDDING_MODEL",
+    "EMBEDDING_PRICE_PER_MTOK",
+    "LLM_MODEL",
+)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def no_model_keys() -> None:
     """Tests never call a model API (D8): drop any real keys from this process, so the
     app, the commands and any worker subprocess see none. Tests that need a "configured"
     key set a dummy one with monkeypatch, and use fakes or mock transports."""
-    for name in ("VOYAGE_API_KEY", "ANTHROPIC_API_KEY", "EMBEDDING_MODEL", "LLM_MODEL"):
+    for name in MODEL_SETTINGS:
         os.environ.pop(name, None)
+    # The evals also read the repo's .env (eval._dotenv), where the owner's real keys
+    # live: hand them a copy without any model setting, so no eval test can reach a model.
+    from mind_dump import eval as search_eval
+
+    read_dotenv = search_eval._dotenv
+
+    def dotenv_without_model_settings() -> dict[str, str]:
+        return {k: v for k, v in read_dotenv().items() if k not in MODEL_SETTINGS}
+
+    search_eval._dotenv = dotenv_without_model_settings
 
 
 @pytest.fixture(scope="session")

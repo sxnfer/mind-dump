@@ -131,7 +131,7 @@ erDiagram
     model_usage {
         bigint      id PK "identity"
         timestamptz created_at
-        text        provider "anthropic | voyage | fake"
+        text        provider "anthropic | openai | voyage | fake"
         text        model "the model that served the call"
         text        purpose "answer | judge | describe | check | embed_documents | embed_query"
         integer     input_tokens
@@ -203,7 +203,7 @@ erDiagram
 | `file_texts` primary key `(item_id)` | A file's text (`GET /items/{id}/text`) |
 | `item_tags` primary key `(item_id, tag_id)` | Tags of one item |
 | `item_tags_tag_id_idx` | Items with one tag (the search `tag` filter) |
-| `chunks_text_tsv_idx` (GIN on `text_tsv`) | Keyword search: `text_tsv @@` the query from `websearch_to_tsquery('english', q)`, or its any-word form (every ` & ` turned into ` \| `) (D37) |
+| `chunks_text_tsv_idx` (GIN on `text_tsv`) | Keyword search: `text_tsv @@` the query from `websearch_to_tsquery('english', q)`; in keyword mode also its any-word form (every ` & ` turned into ` \| `); in hybrid mode also the typed codes (the query's lexemes with a digit, OR-joined) (D37) |
 | `messages_conversation_seq_key` `(conversation_id, seq)` | A conversation's messages in order: the history replay and `GET /conversations/{id}` |
 | `model_usage_created_at_idx` | Today's total for the cost cap, and `GET /usage` (D39) |
 | `ask_requests_created_at_idx` | The rate limit: questions in the last 60 seconds (D39) |

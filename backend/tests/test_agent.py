@@ -14,6 +14,7 @@ from chat_helpers import Conn, add_doc, context, count, drain, settings, tool_re
 from mind_dump import agent
 from mind_dump.agent import ANSWER_NOW, NOT_RUN, Scope, resolve_citations, run_turn
 from mind_dump.embeddings import FakeEmbedder
+from mind_dump.errors import TemporaryError
 from mind_dump.llm import ScriptedLLM, TurnRequest, text_turn, tool_turn
 
 BUFFER = "Between ten and twenty percent of credits go into the shared buffer pool."
@@ -234,7 +235,8 @@ def test_a_scoped_search_sees_only_its_item_whatever_the_model_asks(
 ) -> None:
     llm = ScriptedLLM(
         [
-            tool_turn(("search", {"query": "buffer pool mangrove", "type": "link"})),
+            # Both items hold the word; the other one holds it twice, and is a link.
+            tool_turn(("search", {"query": "mangrove", "type": "link"})),
             tool_turn(("get_item", {"item_id": discuss["other"]})),
             text_turn("Done."),
         ]
@@ -285,3 +287,38 @@ def test_tool_inputs_are_checked(conn: Conn, docs: dict) -> None:
     results = tool_results(llm.requests[1].messages)
     assert all(r["is_error"] for r in results)
     assert json.dumps([r["content"] for r in results]).count("must") == 4
+
+
+class _FailingEmbedder:
+    model = "text-embedding-3-small"
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        raise TemporaryError("OpenAI answered HTTP 503 Service Unavailable")
+
+    def embed_query(self, text: str) -> list[float]:
+        raise TemporaryError("OpenAI answered HTTP 503 Service Unavailable")
+
+
+NAMES_THE_MODEL_MUST_NOT_SEE = (
+    "OPENAI_API_KEY", "VOYAGE_API_KEY", "ANTHROPIC_API_KEY", "EMBEDDING_PROVIDER",
+    "EMBEDDING_MODEL", "_API_KEY", "OpenAI", "Voyage", "openai", "voyage", ".env",
+)  # fmt: skip
+
+
+@pytest.mark.parametrize("provider", ["openai", "voyage"])
+@pytest.mark.parametrize("embedder", [None, _FailingEmbedder()], ids=["no embedder", "failing"])
+def test_a_words_only_search_tells_the_model_no_setting_or_provider(
+    conn: Conn, provider: str, embedder: object
+) -> None:
+    """The API's notice names the key for the owner; the tool result the model reads
+    says only that the passages matched by words."""
+    add_doc(conn, ["The buffer pool holds a share of the credits."])
+    llm = ScriptedLLM([tool_turn(("search", {"query": "buffer pool"})), text_turn("Done.")])
+    cfg = settings(embedding_provider=provider, embedding_model="")
+    drain(run_turn(llm, context(conn, cfg, embedder=embedder), [], {}, "What is the pool?"))
+
+    (search,) = tool_results(llm.requests[1].messages)
+    assert search["parsed"]["results"]  # found by words
+    assert search["parsed"]["notice"] == agent.WORDS_ONLY
+    for name in NAMES_THE_MODEL_MUST_NOT_SEE:
+        assert name not in search["content"], name

@@ -23,7 +23,9 @@ What it does, in order:
 6. Print the numbers and every miss, and write docs/results.md (unless --no-results).
 
 The embedding model: --fake-embedder (hash vectors, for tests: the numbers mean nothing),
-else VOYAGE_API_KEY from the environment or from the repo's .env. Keys are never printed.
+else the EMBEDDING_PROVIDER's key (OPENAI_API_KEY by default, VOYAGE_API_KEY with
+EMBEDDING_PROVIDER=voyage) from the environment or from the repo's .env, with
+EMBEDDING_MODEL if set. Keys are never printed.
 """
 
 import argparse
@@ -43,8 +45,8 @@ from fastapi import Response
 from psycopg.rows import DictRow, dict_row
 
 from mind_dump import search as search_mod
-from mind_dump.config import DEFAULT_EMBEDDING_MODEL
-from mind_dump.embeddings import Embedder, FakeEmbedder, VoyageEmbedder
+from mind_dump.config import EMBEDDING_PROVIDERS, Settings, embedding_settings
+from mind_dump.embeddings import Embedder, FakeEmbedder, create_embedder
 from mind_dump.items import create_item
 from mind_dump.migrate import migrate
 from mind_dump.models import NewNote
@@ -326,7 +328,10 @@ def _commit() -> str:
     return f"{sha} (with uncommitted backend changes)" if dirty else sha
 
 
-def results_markdown(report: Report, commit: str, when: datetime) -> str:
+def results_markdown(
+    report: Report, commit: str, when: datetime, key_name: str = "OPENAI_API_KEY"
+) -> str:
+    """key_name: the embedding key a pending row asks for (the configured provider's)."""
     rows = []
     for name in MODES:
         m = report.mode(name)
@@ -335,7 +340,7 @@ def results_markdown(report: Report, commit: str, when: datetime) -> str:
                 f"| {name} | {m.recall_at_k:.2f} | {m.mrr:.2f} | {m.hits_at_k}/{len(m.answers)} |"
             )
         else:
-            rows.append(f"| {name} | pending | pending | needs a run with `VOYAGE_API_KEY` |")
+            rows.append(f"| {name} | pending | pending | needs a run with `{key_name}` |")
     pending = [n for n in MODES if report.mode(n) is None]
     lines = [
         "# Search eval results",
@@ -347,7 +352,7 @@ def results_markdown(report: Report, commit: str, when: datetime) -> str:
         f"- Commit: {commit}",
         f"- Corpus: {report.documents} documents, {report.chunks} chunks, "
         f"{report.questions} questions",
-        f"- Embedding model: {report.embedding_model or 'none (no VOYAGE_API_KEY)'}",
+        f"- Embedding model: {report.embedding_model or f'none (no {key_name})'}",
         f"- A hit: a chunk of the expected document that contains the expected passage. "
         f"recall@{TOP_K}: share of questions with a hit in the top {TOP_K}. "
         f"MRR@{DEPTH}: mean of 1/rank of the first hit (0 if none in the top {DEPTH}).",
@@ -360,7 +365,7 @@ def results_markdown(report: Report, commit: str, when: datetime) -> str:
     if pending:
         lines += [
             f"The {' and '.join(pending)} rows are pending: this run had no embedding model, so "
-            "only keyword search could be measured. Run the eval with `VOYAGE_API_KEY` set to "
+            f"only keyword search could be measured. Run the eval with `{key_name}` set to "
             "fill them in. No number here is estimated.",
             "",
         ]
@@ -428,6 +433,17 @@ def _setting(name: str, dotenv: dict[str, str]) -> str | None:
     return value or None
 
 
+def embedding_from(dotenv: dict[str, str]) -> Settings:
+    """Settings holding only the embedding choice (D8), read like load_settings reads
+    them, but from the environment or the repo's .env. Raises RuntimeError for an
+    unknown EMBEDDING_PROVIDER."""
+    return Settings(
+        database_url="unused",
+        migrations_dir=MIGRATIONS_DIR,
+        **embedding_settings(lambda name: _setting(name, dotenv)),
+    )
+
+
 def main(argv: Sequence[str] | None = None, out: Callable[[str], None] = print) -> int:
     parser = argparse.ArgumentParser(prog="python -m mind_dump.eval", description=__doc__)
     parser.add_argument("--database-url", help="default: the mind_dump_eval database")
@@ -451,19 +467,24 @@ def main(argv: Sequence[str] | None = None, out: Callable[[str], None] = print) 
     wanted = [m.strip() for m in args.modes.split(",")] if args.modes else None
     if wanted is not None and any(m not in MODES for m in wanted):
         parser.error(f"--modes takes {', '.join(MODES)}")
+    try:
+        chosen = embedding_from(dotenv)
+    except RuntimeError as exc:
+        out(str(exc))
+        return 2
+    key_name = EMBEDDING_PROVIDERS[chosen.embedding_provider].key_setting
     embedder: Embedder | None = None
     needs_model = wanted is None or any(m != "keyword" for m in wanted)
     if args.fake_embedder:
         embedder = FakeEmbedder()
-    elif needs_model and (key := _setting("VOYAGE_API_KEY", dotenv)):
-        model = _setting("EMBEDDING_MODEL", dotenv) or DEFAULT_EMBEDDING_MODEL
-        embedder = VoyageEmbedder(key, model)
+    elif needs_model:
+        embedder = create_embedder(chosen)
     if wanted is None:
         wanted = list(MODES) if embedder else ["keyword"]
         if embedder is None:
-            out("No VOYAGE_API_KEY: measuring keyword search only.")
+            out(f"No {key_name}: measuring keyword search only.")
     elif embedder is None and any(m != "keyword" for m in wanted):
-        out("vector and hybrid need an embedding model: set VOYAGE_API_KEY.")
+        out(f"vector and hybrid need an embedding model: set {key_name}.")
         return 2
     modes: list[search_mod.Mode] = [m for m in MODES if m in wanted]  # type: ignore[misc]
 
@@ -475,7 +496,7 @@ def main(argv: Sequence[str] | None = None, out: Callable[[str], None] = print) 
     if args.fake_embedder:
         out("\n--fake-embedder: vector numbers are meaningless, so no results file is written.")
     elif not args.no_results:
-        text = results_markdown(report, _commit(), datetime.now(UTC))
+        text = results_markdown(report, _commit(), datetime.now(UTC), key_name)
         args.results.write_text(text + keep_answers(args.results))
         out(f"\nWrote {args.results}")
 
