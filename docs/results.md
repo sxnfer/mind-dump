@@ -3,19 +3,19 @@
 > Written by `python -m mind_dump.eval` (M4). Do not edit by hand: run it again.
 > How it works: `backend/src/mind_dump/eval.py`. Corpus and questions: `backend/eval/`.
 
-- Date: 2026-11-25 01:16 UTC
-- Commit: 93706fe
+- Date: 2026-11-25 10:19 UTC
+- Commit: 3695147
 - Corpus: 12 documents, 30 chunks, 20 questions
-- Embedding model: none (no VOYAGE_API_KEY)
+- Embedding model: none (no OPENAI_API_KEY)
 - A hit: a chunk of the expected document that contains the expected passage. recall@5: share of questions with a hit in the top 5. MRR@10: mean of 1/rank of the first hit (0 if none in the top 10).
 
 | Mode | recall@5 | MRR@10 | Hits in top 5 |
 | --- | --- | --- | --- |
 | keyword | 0.80 | 0.71 | 16/20 |
-| vector | pending | pending | needs a run with `VOYAGE_API_KEY` |
-| hybrid | pending | pending | needs a run with `VOYAGE_API_KEY` |
+| vector | pending | pending | needs a run with `OPENAI_API_KEY` |
+| hybrid | pending | pending | needs a run with `OPENAI_API_KEY` |
 
-The vector and hybrid rows are pending: this run had no embedding model, so only keyword search could be measured. Run the eval with `VOYAGE_API_KEY` set to fill them in. No number here is estimated.
+The vector and hybrid rows are pending: this run had no embedding model, so only keyword search could be measured. Run the eval with `OPENAI_API_KEY` set to fill them in. No number here is estimated.
 
 ## Rank of the right passage, per question
 
