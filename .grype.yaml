@@ -1,0 +1,11 @@
+# Grype settings for the image scans (D40). CI mounts this file and passes it with -c.
+# The gate (ci.yml) adds --only-fixed --fail-on high; the nightly scan (nightly-scans.yml)
+# adds --fail-on high only, so it also reports findings that have no fix yet.
+#
+# Accepted risks: one entry per finding, dated, with a reason, for example
+#   - vulnerability: CVE-2026-12345
+#     package:
+#       name: libexample
+#     reason: "2026-11-25 San: not reachable from the app (why); recheck by 2026-12-25"
+# An entry hides that finding from both scans, so keep the list short and re-check it.
+ignore: []
