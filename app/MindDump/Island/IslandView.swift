@@ -31,8 +31,8 @@ struct IslandView: View {
             .background { shoulders(metrics: metrics, motion: motion) }
             // Width and height each get their own spring. `animation(_:body:)` scopes a
             // spring to exactly the modifier inside the braces.
-            .animation(motion.edges) { $0.frame(width: metrics.width) }
-            .animation(motion.body) { $0.frame(height: metrics.height) }
+            .animation(motion.edges) { $0.modifier(IslandWidth(width: metrics.width)) }
+            .animation(motion.body) { $0.modifier(IslandHeight(height: metrics.height)) }
             .scaleEffect(island.isPressed ? 1.035 : 1, anchor: .top)
             .animation(IslandMotion.spring(0.36, 0.62), value: island.isPressed)
             .shadow(color: .black.opacity(0.36 * metrics.shadow), radius: 15, y: 10)
@@ -181,6 +181,42 @@ struct IslandView: View {
         .frame(maxHeight: .infinity, alignment: .top)
         .animation(motion.corner, value: radius)
         .allowsHitTesting(false)
+    }
+}
+
+/// The body's width, fed to layout afresh on every frame of its spring.
+///
+/// Why not a plain animated `frame(width:)`: SwiftUI lays the view out once, at the final
+/// width, and then animates the size and the position of the result separately. The size
+/// took this spring; the position (the body is centred) took the slower spring of the
+/// surrounding `withAnimation`. So the right edge sprang out and overshot while the left
+/// edge crawled, up to 10 points behind. An `Animatable` modifier is handed each in-between
+/// width itself, so layout runs per frame and the body stays centred on the notch.
+private struct IslandWidth: ViewModifier, Animatable {
+    var width: CGFloat
+
+    nonisolated var animatableData: CGFloat {
+        get { width }
+        set { width = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content.frame(width: width)
+    }
+}
+
+/// The same for the height, so everything inside the body (keyline, clip, content) sees
+/// one consistent size on every frame.
+private struct IslandHeight: ViewModifier, Animatable {
+    var height: CGFloat
+
+    nonisolated var animatableData: CGFloat {
+        get { height }
+        set { height = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content.frame(height: height)
     }
 }
 
