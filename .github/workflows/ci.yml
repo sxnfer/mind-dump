@@ -182,3 +182,55 @@ jobs:
             -derivedDataPath app/build/dd \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+  # P4 (D40): security scans, in their own job so each scan has its own log.
+  # This job name is a required check in the ruleset: rename both together.
+  scans:
+    name: scans (secrets, dependencies, image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # full history: the secret scan reads commits, not just files
+
+      # Gitleaks (MIT) as a plain binary, not gitleaks-action (other licence since v2).
+      # Pinned by the SHA-256 of the release file (D40: a movable tag or a replaced
+      # release file cannot change what runs; see the Trivy incident, March 2026).
+      # Checked 2026-11-25 against the release's checksums.txt and GitHub's asset digest.
+      - name: Install gitleaks 8.30.1 (SHA-256 pinned)
+        env:
+          GITLEAKS_VERSION: "8.30.1"
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl -sSfL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks version
+
+      # Scans the commits this change adds: on a pull request base..head, on a push the
+      # pushed range. A commit it can't find (first push, force push, all-zero `before`)
+      # means a full-history scan instead: gitleaks scans 0 commits on an unknown range
+      # and passes, so the range is checked here first. Values are redacted in the log.
+      - name: Secret scan (gitleaks)
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          is_commit() { [ -n "$1" ] && git cat-file -e "$1^{commit}" 2>/dev/null; }
+          if [ "$EVENT" = pull_request ]; then base=$PR_BASE; head=$PR_HEAD; else base=$PUSH_BEFORE; head=$PUSH_AFTER; fi
+          if is_commit "$base" && is_commit "$head"; then
+            range="$base..$head"
+            echo "Secret scan ($EVENT): commits $range, $(git rev-list --count --no-merges "$range") non-merge commit(s)"
+            "$RUNNER_TEMP/gitleaks" git . --redact --no-banner --verbose --log-opts="$range"
+          else
+            echo "Secret scan ($EVENT): range '${base:-none}..${head:-none}' not found, so full history, $(git rev-list --count --no-merges HEAD) non-merge commit(s)"
+            "$RUNNER_TEMP/gitleaks" git . --redact --no-banner --verbose
+          fi
