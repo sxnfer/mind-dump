@@ -38,8 +38,8 @@ The owner, San, is a data engineer who builds this to learn backend and DevOps p
 - M0: done and merged to `main` (PR #1). Repo is public; secret scanning, push protection and the ruleset "main: require PR and CI" are on.
 - M1: done and merged to `main` (PR #2): Postgres via Compose, migration runner, items API with tests, + button, 409 on duplicate links, schema diagram (`docs/schema.md`). Next milestone work comes through the proof track (P1 builds M3's fetch, raw landing and versions early).
 - Until 26 Nov 2026, the proof track (`docs/plan/proof-track.md`) sets the order: P0 to P4 are musts, backend only. The agent writes the code; San makes the decisions. A step is done only when San can defend it without notes.
-- Proof track: **P1** merged (PR #8). **P2** built on branch `p2-files` (D34: uploads by content hash, 413/415 limits; migration 006; 148 tests pass), not yet committed. Next: San defends P2.
+- Proof track: **P1** merged (PR #8). **P2** merged (PR #9: D34 uploads by content hash; 148 tests). **P3** decided (D6, D35, D36) and built on branch `p3-jobs` (not yet merged): jobs table, worker service, chunking, 213 tests. Embeddings wait for D8. P2 defend: main answer clean, follow-up needed hints, re-ask once.
 - Proof track: **P0** in progress. D29 merged (PR #4): trunk-based, PR + CI gate, fix forward. Direct-push proof done (rejected by both rules). Hotfix drill done (PR #5). Next: defend Q2/Q3, logged in `docs/plan/proof-track.md`.
-- Data collection choices: 1 raw landing (D28), 2 idempotent jobs (D30), 3 business key (D31), 4 history (D32) recorded; 5 duplicate files waits for P2. Also approved: D5 storage, D7 web extraction, D33 fetch client.
-- Proof track: **P1** decisions done; next, build P1 on branch `p1-collect-links`. Interview (26 Nov): live demo from San's Mac, then defend.
+- Data collection choices: 1 raw landing (D28), 2 idempotent jobs (D30), 3 business key (D31), 4 history (D32), 5 duplicate files (D34) recorded. Also approved: D5 storage, D7 web extraction, D33 fetch client, D6 jobs, D35 retries, D36 chunking.
+- Interview (26 Nov): live demo from San's Mac, then defend.
 - Update this section when a milestone starts or ends.

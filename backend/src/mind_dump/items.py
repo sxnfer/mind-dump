@@ -1,5 +1,5 @@
 """Save, list, get and delete items (M1), read a link's page history (P1, D32),
-and upload files (P2, D34).
+upload files (P2, D34), and follow each item's processing (P3, D6).
 
 Plain SQL with server-side parameters. Queries are string literals, never f-strings,
 so no value can ever become part of the SQL text (ruff rule S608 enforces this).
@@ -16,9 +16,9 @@ from psycopg.rows import DictRow
 from psycopg_pool import ConnectionPool
 from starlette.concurrency import run_in_threadpool
 
-from mind_dump import pages
+from mind_dump import jobs, pages
 from mind_dump.db import get_conn
-from mind_dump.models import Item, ItemDetail, ItemPage, NewItem, NewLink, Version
+from mind_dump.models import Chunk, Item, ItemDetail, ItemPage, Job, NewItem, NewLink, Version
 from mind_dump.storage import Storage
 from mind_dump.uploads import (
     ALLOWED_MEDIA_TYPES,
@@ -45,6 +45,26 @@ def _not_found(item_id: int) -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Item {item_id} not found")
 
 
+# An item's processing state is its latest job's status, in words the app can show (D6).
+_STATE = {
+    None: "saved",  # no job: files, until stage 2
+    "queued": "queued",
+    "running": "processing",
+    "failed": "retrying",
+    "done": "ready",
+    "dead": "error",
+}
+
+
+def _item_fields(row: dict) -> dict:
+    """A row with job_status and job_error becomes the Item's status and error."""
+    fields = dict(row)
+    state = _STATE[fields.pop("job_status", None)]
+    job_error = fields.pop("job_error", None)
+    shown_error = job_error if state in ("retrying", "error") else None
+    return {**fields, "status": state, "error": shown_error}
+
+
 @router.post(
     "",
     status_code=status.HTTP_201_CREATED,
@@ -61,11 +81,16 @@ def create_item(new: NewItem, conn: Conn, response: Response) -> Item:
             row = conn.execute(
                 """
                 INSERT INTO items (type, title, url, body) VALUES (%s, %s, %s, %s)
-                RETURNING id, type, title, url, body, status, created_at,
+                RETURNING id, type, title, url, body, created_at,
                           sha256, media_type, size_bytes, filename
                 """,
                 (new.type, new.title, url, body),
             ).fetchone()
+            if row is None:  # cannot happen: INSERT ... RETURNING always returns the row
+                raise RuntimeError("INSERT returned no row")
+            # Same transaction as the item (D6): an item never exists without its job,
+            # and saving does no fetching; the worker does that later.
+            job = jobs.enqueue(conn, row["id"])
     except psycopg.errors.UniqueViolation:
         # The database's unique index (migration 003) caught a duplicate link.
         existing = conn.execute(
@@ -77,9 +102,7 @@ def create_item(new: NewItem, conn: Conn, response: Response) -> Item:
             detail="This link is already saved",
             headers={"Location": f"/items/{existing_id}"} if existing_id else None,
         ) from None
-    if row is None:  # cannot happen: INSERT ... RETURNING always returns the row
-        raise RuntimeError("INSERT returned no row")
-    item = Item(**row)
+    item = Item(**_item_fields({**row, "job_status": job["status"] if job else None}))
     response.headers["Location"] = f"/items/{item.id}"
     return item
 
@@ -133,7 +156,7 @@ def _save_file(
                     """
                     INSERT INTO items (type, title, sha256, media_type, size_bytes, filename)
                     VALUES ('file', %s, %s, %s, %s, %s)
-                    RETURNING id, type, title, url, body, status, created_at,
+                    RETURNING id, type, title, url, body, created_at,
                               sha256, media_type, size_bytes, filename
                     """,
                     (filename, sha256, media_type, len(data), filename),
@@ -188,7 +211,7 @@ async def upload_file(request: Request, storage: StorageDep, response: Response)
     row = await run_in_threadpool(
         _save_file, request.app.state.pool, storage, data, sha256, media_type, filename
     )
-    item = Item(**row)
+    item = Item(**_item_fields(row))  # no job: files wait for stage 2
     response.headers["Location"] = f"/items/{item.id}"
     return item
 
@@ -204,16 +227,20 @@ def list_items(
     # Fetch one extra row: if it exists, there is another page.
     rows = conn.execute(
         """
-        SELECT id, type, title, url, body, status, created_at,
-               sha256, media_type, size_bytes, filename
-        FROM items
-        WHERE (%(before)s::bigint IS NULL OR id < %(before)s)
-        ORDER BY id DESC
+        SELECT i.id, i.type, i.title, i.url, i.body, i.created_at,
+               i.sha256, i.media_type, i.size_bytes, i.filename,
+               j.status AS job_status, j.error AS job_error
+        FROM items i
+        LEFT JOIN LATERAL (
+            SELECT status, error FROM jobs WHERE item_id = i.id ORDER BY id DESC LIMIT 1
+        ) j ON true
+        WHERE (%(before)s::bigint IS NULL OR i.id < %(before)s)
+        ORDER BY i.id DESC
         LIMIT %(limit)s
         """,
         {"before": before, "limit": limit + 1},
     ).fetchall()
-    items = [Item(**row) for row in rows[:limit]]
+    items = [Item(**_item_fields(row)) for row in rows[:limit]]
     next_before = items[-1].id if len(rows) > limit else None
     return ItemPage(items=items, next_before=next_before)
 
@@ -250,16 +277,21 @@ def get_item(
     at = _parse_as_of(as_of)
     row = conn.execute(
         """
-        SELECT id, type, title, url, body, status, created_at,
-               sha256, media_type, size_bytes, filename
-        FROM items WHERE id = %s
+        SELECT i.id, i.type, i.title, i.url, i.body, i.created_at,
+               i.sha256, i.media_type, i.size_bytes, i.filename,
+               j.status AS job_status, j.error AS job_error
+        FROM items i
+        LEFT JOIN LATERAL (
+            SELECT status, error FROM jobs WHERE item_id = i.id ORDER BY id DESC LIMIT 1
+        ) j ON true
+        WHERE i.id = %s
         """,
         (item_id,),
     ).fetchone()
     if row is None:
         raise _not_found(item_id)
     version = pages.version_at(conn, item_id, at) if row["type"] == "link" else None
-    return ItemDetail(**row, content=Version(**version) if version else None)
+    return ItemDetail(**_item_fields(row), content=Version(**version) if version else None)
 
 
 @router.get("/{item_id}/versions", response_model=list[Version])
@@ -270,9 +302,63 @@ def list_versions(item_id: int, conn: Conn) -> list[Version]:
     return [Version(**row) for row in pages.list_versions(conn, item_id)]
 
 
+@router.post(
+    "/{item_id}/process",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=Job,
+    summary="Queue a fresh run for an item (a manual re-run, or a re-fetch of a link)",
+    responses={
+        404: {"description": "No such item"},
+        409: {"description": "The item already has a job waiting or running"},
+        422: {"description": "Files are not processed yet (stage 2)"},
+    },
+)
+def process_item(
+    item_id: int,
+    conn: Conn,
+    from_raw: Annotated[
+        bool,
+        Query(
+            description="No network: rebuild a link's versions from its landed files and "
+            "rewrite its chunks (after an extractor or chunker change, D28)"
+        ),
+    ] = False,
+) -> Job:
+    item = conn.execute("SELECT type FROM items WHERE id = %s", (item_id,)).fetchone()
+    if item is None:
+        raise _not_found(item_id)
+    if item["type"] == "file":
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Files are not processed yet (PDF text arrives in stage 2)",
+        )
+    job = jobs.enqueue(conn, item_id, "rebuild" if from_raw else "process")
+    if job is None:  # the unique index jobs_one_open_per_item said no
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="This item already has a job waiting or running"
+        )
+    return Job(**job)
+
+
+@router.get("/{item_id}/chunks", response_model=list[Chunk])
+def list_chunks(item_id: int, conn: Conn) -> list[Chunk]:
+    """The item's passages in reading order (D36). Empty until its first job is done."""
+    if conn.execute("SELECT 1 FROM items WHERE id = %s", (item_id,)).fetchone() is None:
+        raise _not_found(item_id)
+    rows = conn.execute(
+        """
+        SELECT chunk_index AS index, start_char, end_char, text
+        FROM chunks WHERE item_id = %s ORDER BY chunk_index
+        """,
+        (item_id,),
+    ).fetchall()
+    return [Chunk(**row) for row in rows]
+
+
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_item(item_id: int, conn: Conn, storage: StorageDep) -> Response:
-    # Rows first (fetches and versions go with the item, ON DELETE CASCADE), then files.
+    # Rows first (fetches, versions, jobs and chunks go with the item, ON DELETE CASCADE),
+    # then files.
     # In that order a failure can only leave unused files, never rows pointing at nothing.
     deleted = conn.execute(
         "DELETE FROM items WHERE id = %s RETURNING type, sha256", (item_id,)

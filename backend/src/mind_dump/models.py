@@ -34,13 +34,24 @@ class NewLink(_NewItem):
 NewItem = Annotated[NewNote | NewLink, Field(discriminator="type")]
 
 
+# What the app shows for an item, derived from its latest job (D6):
+#   queued      saved; the worker hasn't started yet
+#   processing  a worker is on it now
+#   retrying    a try failed for a reason that may pass (D35); `error` says which
+#   ready       chunked: its text is ready for search
+#   error       gave up (dead); `error` says why. POST /items/{id}/process tries again
+#   saved       no job: files, until PDF text arrives in stage 2
+ProcessingStatus = Literal["saved", "queued", "processing", "retrying", "ready", "error"]
+
+
 class Item(BaseModel):
     id: int
     type: Literal["note", "link", "file"]
     title: str | None
     url: str | None
     body: str | None
-    status: str
+    status: ProcessingStatus
+    error: str | None = None  # why it is retrying or in error; None otherwise
     created_at: datetime
     # Files only (D34); None for notes and links.
     sha256: str | None = None  # the file's identity: the same bytes give the same hash
@@ -68,3 +79,24 @@ class ItemDetail(Item):
     # The page text at ?as_of=, or now. None for notes, for a link not fetched yet,
     # and for a date before the first fetch.
     content: Version | None = None
+
+
+class Job(BaseModel):
+    """One request to process an item (D6). 202 from POST /items/{id}/process."""
+
+    id: int
+    item_id: int
+    kind: Literal["process", "rebuild"]
+    status: Literal["queued", "running", "failed", "done", "dead"]
+    attempts: int
+    run_after: datetime
+    created_at: datetime
+
+
+class Chunk(BaseModel):
+    """One passage of an item's text (D36). text == source_text[start_char:end_char]."""
+
+    index: int  # 0, 1, 2, ... in reading order
+    start_char: int
+    end_char: int
+    text: str

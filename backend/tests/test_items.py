@@ -25,7 +25,7 @@ def test_save_note_returns_201_with_location(client: TestClient) -> None:
     assert item["type"] == "note"
     assert item["body"] == "Buy oat milk"
     assert item["url"] is None
-    assert item["status"] == "saved"
+    assert item["status"] == "queued"  # P3: the worker chunks it later (was "saved")
 
 
 def test_save_link_with_title(client: TestClient) -> None:

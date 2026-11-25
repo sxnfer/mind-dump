@@ -10,8 +10,8 @@ rebuild_versions replays every landed file through the current extractor and rep
 the item's versions in one transaction. Use it after improving the extractor.
 
 Call these with an autocommit connection, so each `with conn.transaction()` is a real
-COMMIT (inside an open transaction it would only be a savepoint). The worker (P3) will
-call process_fetch; until then `python -m mind_dump.refetch` does.
+COMMIT (inside an open transaction it would only be a savepoint). The worker (P3) calls
+process_fetch and rebuild_versions; `python -m mind_dump.refetch` can call them directly.
 """
 
 import gzip
@@ -63,7 +63,7 @@ def _lock_link(conn: Conn, item_id: int) -> None:
         raise LinkNotFound(f"No link with id {item_id}")
 
 
-def _parseable(http_status: int, content_type: str | None) -> bool:
+def parseable(http_status: int, content_type: str | None) -> bool:
     """Only 2xx pages of a type we can read are extracted (D28). A 404 never makes text."""
     if not 200 <= http_status < 300 or not content_type:
         return False
@@ -118,7 +118,7 @@ def land_fetch(conn: Conn, storage: Storage, item_id: int, result: FetchResult) 
 
 
 def _text_of(storage: Storage, fetch: DictRow, extract: Extractor) -> str:
-    if not _parseable(fetch["http_status"], fetch["content_type"]):
+    if not parseable(fetch["http_status"], fetch["content_type"]):
         return ""
     return extract(gzip.decompress(storage.get(fetch["storage_key"])), fetch["content_type"])
 

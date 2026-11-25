@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pool.close()
 
 
-app = FastAPI(title="Mind Dump API", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="Mind Dump API", version="0.4.0", lifespan=lifespan)
 app.include_router(items.router)
 
 

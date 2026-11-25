@@ -79,19 +79,37 @@ jobs:
           cache-to: type=gha,mode=max
 
       # The smoke test runs the exact command a stranger types: docker compose up.
-      # It also proves the M1 done-when: a saved link survives a restart of both containers.
+      # It also proves the M1 done-when: a saved link survives a restart of both containers,
+      # and the P3 one: the worker container picks up a saved note and chunks it.
       - name: Smoke test (compose up, save, restart, read back)
         working-directory: .
         run: |
           printf 'POSTGRES_PASSWORD=ci-smoke-password\nDB_PORT=5433\n' > .env
-          docker compose up -d --no-build --wait api
+          docker compose up -d --no-build --wait api worker
           curl --fail -sS -X POST localhost:8000/items \
             -H 'content-type: application/json' \
             -d '{"type":"link","url":"https://example.com/smoke"}'
           docker compose down
-          docker compose up -d --no-build --wait api
+          docker compose up -d --no-build --wait api worker
           curl --fail -sS localhost:8000/items | tee /tmp/items.json
           grep -q 'https://example.com/smoke' /tmp/items.json
+
+          # P3: save a note, wait for the worker to make it ready, then read its chunks.
+          id=$(curl --fail -sS -X POST localhost:8000/items \
+            -H 'content-type: application/json' \
+            -d '{"type":"note","body":"Smoke test note.\n\nIt should become one chunk."}' \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["id"])')
+          status=""
+          for _ in $(seq 1 30); do
+            status=$(curl --fail -sS "localhost:8000/items/$id" \
+              | python3 -c 'import json, sys; print(json.load(sys.stdin)["status"])')
+            echo "note $id: $status"
+            [ "$status" = ready ] && break
+            sleep 1
+          done
+          test "$status" = ready
+          curl --fail -sS "localhost:8000/items/$id/chunks" | tee /tmp/chunks.json
+          python3 -c 'import json; c = json.load(open("/tmp/chunks.json")); assert len(c) >= 1, c'
       - name: Compose logs (on failure)
         if: failure()
         working-directory: .
