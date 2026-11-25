@@ -7,6 +7,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var monitor = HealthMonitor(url: api.healthURL)
     private let island = IslandModel()
     private lazy var capture = CaptureModel(api: api, island: island)
+    private lazy var ask = AskModel(source: answerSource, island: island)
+    private lazy var panel = PanelModel(capture: capture, ask: ask, island: island)
+    private var keys: Any?
     private var window: NotchWindow?
     private var pointer: PointerTracker?
     #if DEBUG
@@ -17,7 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let window = NotchWindow(
-            rootView: IslandView(island: island, capture: capture, monitor: monitor)
+            rootView: IslandView(island: island, panel: panel, monitor: monitor)
         )
         island.layout = window.placeAtNotch()
         window.orderFrontRegardless()  // show it without making the app active
@@ -31,18 +34,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.pointer = pointer
 
         // An open panel takes the keyboard; anything else gives it back to your app.
-        island.onPanelChange = { [weak window] open in
+        island.onPanelChange = { [weak window, weak self] open in
             guard let window else { return }
             window.takesKeyboard = open
             if open { window.makeKey() } else { window.resignKey() }
         }
+        // Closing stops an answer still on its way (the backend then saves nothing).
+        island.onPanelWillClose = { [weak self] in self?.ask.panelWillClose() }
+        ask.reveal.linkView = window.contentView
+        listenForPanelKeys()
 
         #if DEBUG
         if let view = window.contentView { frames = FrameMonitor(view: view) }
         let film = FilmRecorder(window: window)
         self.film = film
         script = DebugScript(window: window, island: island, pointer: pointer, film: film)
+        script?.onMeasure = { [weak self] name in self?.frames?.begin(name) }
         DebugRemote.listen { [weak self] command in self?.debug(command) }
+        // A whole answer stream is timed as one span, not line by line.
+        ask.onStream = { [weak self] name in
+            if let name { self?.frames?.beginSpan(name) } else { self?.frames?.endSpan() }
+        }
         #endif
         island.onTransition = { [weak self] name in
             self?.pointer?.islandChanged()
@@ -60,6 +72,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         monitor.start()
+    }
+
+    /// Where answers come from: the backend, or in debug builds with `MD_ASK_FIXTURE=1`,
+    /// a canned stream that costs nothing (see `AskFixture`).
+    private var answerSource: AnswerSource {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["MD_ASK_FIXTURE"] == "1" { return AskFixture() }
+        #endif
+        return api
+    }
+
+    /// Panel keys that belong to the panel, not to the text box: Tab switches mode, ⌘N
+    /// starts a new question. A local monitor sees them before the text field does
+    /// (the field would take Tab to move focus). No permission is needed for our own
+    /// window's keys.
+    private func listenForPanelKeys() {
+        keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.island.presentation.isPanel else { return event }
+            let modifiers = event.modifierFlags.intersection([.command, .option, .control])
+            if event.keyCode == 48, modifiers.isEmpty {  // Tab (and Shift-Tab)
+                self.panel.toggleMode()
+                return nil
+            }
+            if event.keyCode == 45, modifiers == .command, self.panel.mode == .ask {  // ⌘N
+                self.ask.newQuestion()
+                return nil
+            }
+            return event
+        }
     }
 
     @objc private func screensChanged() {

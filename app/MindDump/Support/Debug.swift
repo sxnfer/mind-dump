@@ -19,6 +19,9 @@ final class FrameMonitor: NSObject {
     private var stamps: [CFTimeInterval] = []
     private var name = ""
     private var endsAt: CFTimeInterval = 0
+    /// A span (a whole answer stream) is being timed: shorter transitions inside it are
+    /// part of it, not timed on their own.
+    private var inSpan = false
 
     init(view: NSView) {
         self.view = view
@@ -26,11 +29,29 @@ final class FrameMonitor: NSObject {
 
     /// Start (or restart) timing. Measures for a little longer than the longest spring.
     func begin(_ name: String) {
+        guard !inSpan else { return }
+        start(name, until: CACurrentMediaTime() + 1.3 * IslandMotion.timeScale)
+    }
+
+    /// Time everything from now until `endSpan`, however long that is.
+    func beginSpan(_ name: String) {
+        inSpan = false
+        start(name, until: .infinity)
+        inSpan = true
+    }
+
+    func endSpan() {
+        guard inSpan else { return }
+        inSpan = false
+        finish()
+    }
+
+    private func start(_ name: String, until end: CFTimeInterval) {
         if link != nil { finish() }
         guard let view else { return }
         self.name = name
         stamps = []
-        endsAt = CACurrentMediaTime() + 1.3 * IslandMotion.timeScale
+        endsAt = end
         let link = view.displayLink(target: self, selector: #selector(tick(_:)))
         link.add(to: .main, forMode: .common)
         self.link = link
@@ -44,6 +65,7 @@ final class FrameMonitor: NSObject {
     private func finish() {
         link?.invalidate()
         link = nil
+        inSpan = false
         guard stamps.count > 2 else { return }
         let gaps = zip(stamps.dropFirst(), stamps).map { ($0 - $1) * 1000 }
         let sorted = gaps.sorted()
@@ -61,7 +83,7 @@ final class FrameMonitor: NSObject {
         let line = String(
             format: "[frames] %@: %d frames, median %.2f ms (%.0f Hz), worst %.2f ms, late %d%@",
             name, gaps.count, median, 1000 / median, worst, late.count,
-            late.isEmpty ? "" : " (" + late.prefix(4).joined(separator: "; ") + ")"
+            late.isEmpty ? "" : " (" + late.prefix(8).joined(separator: "; ") + ")"
         )
         print(line)
         fflush(stdout)
@@ -164,7 +186,7 @@ final class FilmRecorder {
         let image = function(.null, 8, UInt32(window.windowNumber), 1 | 16)?.takeRetainedValue()
         // Keep the top strip, where the island lives.
         guard let image else { return nil }
-        let height = min(image.height, 330)
+        let height = min(image.height, 470)
         return image.cropping(to: CGRect(x: 0, y: 0, width: image.width, height: height))
     }
 
@@ -201,7 +223,11 @@ final class FilmRecorder {
 ///     click                     press and release on the island
 ///     click away                press somewhere else on the screen
 ///     type Buy oat milk         one key event per character
-///     key return | escape
+///     key return | escape | tab | cmd-n
+///     click mode-ask            press a named control (see `debugTarget`): mode-ask,
+///                               mode-capture, new-question, source-1, open-1, …
+///     scroll -120               scroll wheel over the answer (negative: towards the top)
+///     measure typing            time the next 1.3 s under this name
 ///     wait 0.5                  seconds, in animation time
 ///     film | snap               start a reel / take one still
 @MainActor
@@ -211,6 +237,8 @@ final class DebugScript {
     private let pointer: PointerTracker
     private let film: FilmRecorder
     private var running: Task<Void, Never>?
+    /// Starts the frame monitor by hand, for things that are not transitions (typing).
+    var onMeasure: ((String) -> Void)?
 
     init(window: NotchWindow, island: IslandModel, pointer: PointerTracker, film: FilmRecorder) {
         self.window = window
@@ -231,6 +259,9 @@ final class DebugScript {
                 guard !Task.isCancelled else { return }
                 await step(String(line).trimmingCharacters(in: .whitespaces))
             }
+            // Hand the pointer back to the real mouse. Without this the stand-in stays
+            // where the script left it ("away"), and the island ignores the person.
+            pointer.scriptedPointer = nil
             print("[script] done")
             fflush(stdout)
         }
@@ -250,9 +281,14 @@ final class DebugScript {
                 let body = window.bodyRect(for: island.metrics)
                 pointer.scriptedPointer = NSPoint(x: body.midX, y: body.minY - 300)
                 pointer.clickedElsewhere()  // what the global click monitor would call
-            } else {
-                await click()
+            } else if rest.isEmpty {
+                let body = window.bodyRect(for: island.metrics)
+                await click(at: NSPoint(x: body.midX + 30, y: body.midY))
+            } else if let point = target(rest) {
+                await click(at: point)
             }
+        case "scroll":
+            scroll(by: Double(rest) ?? -100)
         case "type":
             for character in rest {
                 key(String(character), code: 0)
@@ -261,18 +297,45 @@ final class DebugScript {
         case "key":
             if rest == "return" { key("\r", code: 36) }
             if rest == "escape" { key("\u{1B}", code: 53) }
+            if rest == "tab" { key("\t", code: 48) }
+            if rest == "cmd-n" { key("n", code: 45, modifiers: .command) }
         case "wait":
             try? await Task.sleep(for: IslandMotion.seconds(Double(rest) ?? 0.5))
         case "film": film.film()
         case "snap": film.snap()
+        case "measure": onMeasure?(rest)
         default: print("[script] unknown: \(line)")
         }
     }
 
-    /// Press and release in the middle of the island, as window coordinates.
-    private func click() async {
-        let body = window.bodyRect(for: island.metrics)
-        let screenPoint = NSPoint(x: body.midX + 30, y: body.midY)
+    /// The centre of a named control, on screen (see `debugTarget`).
+    private func target(_ name: String) -> NSPoint? {
+        // Only controls on screen now count: a target that is gone (or was only ever in
+        // the launch rehearsal) must not send a click to an old spot, where it would land
+        // outside the island and close the panel.
+        guard let frame = DebugTargets.frames[name]?.frame, let content = window.contentView else {
+            print("[script] no target: \(name)")
+            return nil
+        }
+        // SwiftUI's global frame starts at the window's top-left; AppKit's at the bottom-left.
+        let inWindow = NSPoint(x: frame.midX, y: content.bounds.height - frame.midY)
+        let point = window.convertPoint(toScreen: inWindow)
+        // On screen means inside the island's body, and inside the answer's visible area
+        // when the control scrolls with the answer.
+        var visible = window.bodyRect(for: island.metrics)
+        if name.hasPrefix("source-") || name.hasPrefix("open-"), let scrollView = answerScrollView() {
+            let shown = scrollView.convert(scrollView.bounds, to: nil)
+            visible = visible.intersection(window.convertToScreen(shown))
+        }
+        guard visible.contains(point) else {
+            print("[script] target out of view: \(name)")
+            return nil
+        }
+        return point
+    }
+
+    /// Press and release at a point on screen.
+    private func click(at screenPoint: NSPoint) async {
         pointer.scriptedPointer = screenPoint
         let inWindow = window.convertPoint(fromScreen: screenPoint)
         mouse(.leftMouseDown, at: inWindow)
@@ -291,11 +354,44 @@ final class DebugScript {
         NSApp.postEvent(event, atStart: false)
     }
 
-    private func key(_ characters: String, code: UInt16) {
+    /// A scroll wheel turn over the answer, near the bottom of the open panel. (Not a
+    /// named target: tracking the scroll view's frame on every scroll step cost frames.)
+    private func scroll(by points: Double) {
+        let body = window.bodyRect(for: island.metrics)
+        let point = NSPoint(x: body.midX, y: body.minY + 90)
+        pointer.scriptedPointer = point
+        guard
+            let cgEvent = CGEvent(
+                scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(points), wheel2: 0, wheel3: 0
+            )
+        else { return }
+        // CGEvent locations start at the top-left of the main screen. Naming our window
+        // as the one under the pointer gives the event a position inside it.
+        let top = NSScreen.screens.first?.frame.maxY ?? 0
+        cgEvent.location = CGPoint(x: point.x, y: top - point.y)
+        cgEvent.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
+        cgEvent.setIntegerValueField(
+            .mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowNumber)
+        )
+        guard let event = NSEvent(cgEvent: cgEvent), let scrollView = answerScrollView() else { return }
+        // Straight to the answer's scroll view: the wheel event has no window position.
+        scrollView.scrollWheel(with: event)
+    }
+
+    /// The tallest scroll view in the window: the answer's (the box has a small one).
+    private func answerScrollView() -> NSScrollView? {
+        func all(_ view: NSView) -> [NSScrollView] {
+            if let scrollView = view as? NSScrollView { return [scrollView] }
+            return view.subviews.flatMap(all)
+        }
+        return window.contentView.map(all)?.max { $0.frame.height < $1.frame.height }
+    }
+
+    private func key(_ characters: String, code: UInt16, modifiers: NSEvent.ModifierFlags = []) {
         for type in [NSEvent.EventType.keyDown, .keyUp] {
             guard
                 let event = NSEvent.keyEvent(
-                    with: type, location: .zero, modifierFlags: [],
+                    with: type, location: .zero, modifierFlags: modifiers,
                     timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                     context: nil, characters: characters, charactersIgnoringModifiers: characters,
                     isARepeat: false, keyCode: code
@@ -306,3 +402,48 @@ final class DebugScript {
     }
 }
 #endif
+
+import SwiftUI
+
+#if DEBUG
+/// Where named controls are on screen, so a debug script can click them as a person would.
+@MainActor
+enum DebugTargets {
+    /// Each frame with the view that recorded it, so only that view can remove it.
+    static var frames: [String: (owner: UUID, frame: CGRect)] = [:]
+}
+
+private struct DebugTargetRecorder: ViewModifier {
+    let name: String
+    @State private var owner = UUID()
+    @Environment(\.isRehearsal) private var isRehearsal
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                guard !isRehearsal else { return }  // the launch rehearsal is never clicked
+                DebugTargets.frames[name] = (owner, frame)
+            }
+            .onDisappear {
+                if DebugTargets.frames[name]?.owner == owner { DebugTargets.frames[name] = nil }
+            }
+    }
+}
+#endif
+
+extension EnvironmentValues {
+    /// True inside the launch rehearsal (see `IslandView.rehearsal`).
+    @Entry var isRehearsal = false
+}
+
+extension View {
+    /// Debug builds remember this view's frame under `name` (for `click <name>` in a debug
+    /// script). Release builds do nothing.
+    func debugTarget(_ name: String) -> some View {
+        #if DEBUG
+        modifier(DebugTargetRecorder(name: name))
+        #else
+        self
+        #endif
+    }
+}

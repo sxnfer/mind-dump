@@ -157,18 +157,25 @@ Right-click the panel to quit. The app is unsigned (see `docs/decisions/`), so b
 
 ## Develop the Mac app
 
-The app is one black "island" that hangs from the notch (`app/MindDump/Island/`). The window never moves; only the island's body changes size inside it, on springs.
+The app is one black "island" that hangs from the notch (`app/MindDump/Island/`). The window never moves; only the island's body changes size inside it, on springs. The open panel has two modes, Capture and Ask (Tab switches). Ask streams an answer with numbered sources from `POST /ask` (`app/MindDump/Ask/`).
 
-Debug builds carry three aids for judging motion, all in `app/MindDump/Support/Debug.swift`:
+Debug builds carry these aids, mostly in `app/MindDump/Support/Debug.swift`:
 
 ```bash
 APP=app/build/dd/Build/Products/Debug/MindDump.app
 "$APP/Contents/MacOS/MindDump"                        # run from Terminal: prints frame timings
 MD_MOTION_SCALE=8 "$APP/Contents/MacOS/MindDump"      # everything eight times slower
+MD_ASK_FIXTURE=1 "$APP/Contents/MacOS/MindDump"       # Ask plays canned answers: no model call, no cost
+MD_REDUCE_MOTION=1 "$APP/Contents/MacOS/MindDump"     # behave as if Reduce Motion were on
+MD_API_BASE=http://127.0.0.1:18000 "$APP/..."         # talk to a throwaway backend, not your items
 notifyutil -p io.github.sxnfer.MindDump.debug.open    # drive it from a shell: peek, open, close, saved, film, script
 ```
 
-Each transition prints a line such as `[frames] open: 156 frames, median 8.33 ms (120 Hz), worst 8.33 ms, late 0`. A late frame is a dropped frame.
+Each transition prints a line such as `[frames] open: 156 frames, median 8.33 ms (120 Hz), worst 8.33 ms, late 0`. A late frame is a dropped frame. A whole answer stream is timed as one line, `[frames] stream: …`.
+
+The canned answers pick a script from a word in the question: `long` (passes the panel's height), `nothing` (not from your items), `fail` (an error mid-stream), `limit` (429), `key` (no Claude key); anything else gets a short answer with two sources.
+
+`script` plays `<app temp folder>/script.txt`, one step per line: `pointer notch|away`, `click`, `click away`, `click <control>` (`mode-ask`, `mode-capture`, `new-question`, `source-1`, `open-1`, …), `type …`, `key return|escape|tab|cmd-n`, `scroll <points>`, `measure <name>`, `wait <s>`, `film`, `snap`.
 
 ## Develop the backend
 

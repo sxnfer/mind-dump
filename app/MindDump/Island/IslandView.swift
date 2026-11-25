@@ -8,12 +8,14 @@ import SwiftUI
 /// and can retarget a spring mid-flight without a jump.
 struct IslandView: View {
     let island: IslandModel
-    let capture: CaptureModel
+    let panel: PanelModel
     let monitor: HealthMonitor
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// True for a moment after launch, while the content is built once out of sight.
     @State private var rehearsing = true
+    /// Ask mode with a finished answer, for the rehearsal only.
+    @State private var rehearsalPanel: PanelModel?
 
     var body: some View {
         let metrics = island.metrics
@@ -23,14 +25,15 @@ struct IslandView: View {
             .fill(.black)  // true black: on the hardware notch it disappears
             .animation(motion.corner, value: metrics.corner)
             .overlay(alignment: .top) { content }
+            .overlay(alignment: .top) { panelLayer }
             .clipShape(IslandBody(corner: metrics.corner))
             .animation(motion.corner, value: metrics.corner)
             .overlay { keyline(metrics: metrics, motion: motion) }
             .background { shoulders(metrics: metrics, motion: motion) }
             // Width and height each get their own spring. `animation(_:body:)` scopes a
             // spring to exactly the modifier inside the braces.
-            .animation(motion.edges) { $0.frame(width: metrics.width) }
-            .animation(motion.body) { $0.frame(height: metrics.height) }
+            .animation(motion.edges) { $0.modifier(IslandWidth(width: metrics.width)) }
+            .animation(motion.body) { $0.modifier(IslandHeight(height: metrics.height)) }
             .scaleEffect(island.isPressed ? 1.035 : 1, anchor: .top)
             .animation(IslandMotion.spring(0.36, 0.62), value: island.isPressed)
             .shadow(color: .black.opacity(0.36 * metrics.shadow), radius: 15, y: 10)
@@ -38,14 +41,25 @@ struct IslandView: View {
             .animation(motion.shadow, value: metrics.shadow)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(alignment: .top) { rehearsal }
+            .onAppear { if rehearsing { rehearsalPanel = PanelModel.rehearsal(island: island) } }
             .foregroundStyle(.white)
             .environment(\.colorScheme, .dark)  // controls drawn for a black surface
             .onExitCommand { island.close() }  // Escape
-            .onChange(of: reduceMotion, initial: true) { _, on in island.reduceMotion = on }
+            .onChange(of: reduceMotion, initial: true) { _, on in island.reduceMotion = on || Self.forceReduceMotion }
             .contextMenu {
                 // No Dock icon or menu bar, so right-click is the way to quit.
                 Button("Quit Mind Dump") { NSApp.terminate(nil) }
             }
+    }
+
+    /// Debug builds: `MD_REDUCE_MOTION=1` acts as if Reduce Motion were on, to check that
+    /// path without changing a system setting.
+    private static var forceReduceMotion: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.environment["MD_REDUCE_MOTION"] == "1"
+        #else
+        false
+        #endif
     }
 
     // MARK: Content
@@ -65,8 +79,7 @@ struct IslandView: View {
                     .id(activity.id)
                     .transition(transition)
             case .panel:
-                CapturePanel(island: island, capture: capture, monitor: monitor)
-                    .transition(transition)
+                EmptyView()  // the panel is its own layer: see `panelLayer`
             }
         }
         // Content is laid out at its final size from the first frame; the growing body
@@ -85,6 +98,21 @@ struct IslandView: View {
         }
     }
 
+    /// The panel is never removed, only hidden. Rebuilding it on every open cost up to
+    /// 70 ms with a long answer in it (every line laid out again), which delayed the open.
+    /// Hidden, it costs nothing; shown, it is already built.
+    ///
+    /// It is a layer of its own, not a child of the stack in `content`. A stack hands its
+    /// flexible children the size of its largest child, so with the 468-point panel in
+    /// it, the peek's + and status dot were laid out 468 points apart: outside the body,
+    /// where the clip hid them.
+    private var panelLayer: some View {
+        PanelView(island: island, panel: panel, monitor: monitor)
+            .modifier(PanelPresence(shown: island.presentation.isPanel, motion: island.motion))
+            // Its own full size from the first frame; the growing body reveals it.
+            .fixedSize(horizontal: true, vertical: true)
+    }
+
     private var contentWidth: CGFloat {
         switch island.presentation {
         case .panel: IslandLayout.panelWidth
@@ -96,13 +124,21 @@ struct IslandView: View {
 
     /// The first time SwiftUI builds a view it creates the text field, loads fonts and
     /// symbols and lays everything out: about 27 ms here, which is three dropped frames
-    /// at 120 Hz in the middle of the first open. So the panel and a pill are built once
-    /// at launch, invisible and untouchable, and thrown away. Every open after that is
-    /// as cheap as the hundredth.
+    /// at 120 Hz in the middle of the first open. The panel itself is now built at launch
+    /// and kept (see `content`). What is rehearsed here, built once out of sight and
+    /// thrown away, is everything the panel does not show yet: a pill, and Ask mode with
+    /// a finished answer in it (styled lines with references, the spinner line, the
+    /// notices, an open source row). So the first switch to Ask and the first answer
+    /// build nothing new while they animate.
     @ViewBuilder private var rehearsal: some View {
         if rehearsing {
             VStack {
-                CapturePanel(island: island, capture: capture, monitor: monitor, isRehearsal: true)
+                if let rehearsalPanel {
+                    PanelView(island: island, panel: rehearsalPanel, monitor: monitor, isRehearsal: true)
+                }
+                StatusLine(status: .searching("rehearsal"))
+                Notice(glyph: "circle.dashed", text: "Not found in your items.", strong: true)
+                Notice(glyph: "ellipsis.circle", text: "May be incomplete.", strong: false)
                 CompactContent(
                     island: island,
                     activity: IslandActivity(id: "rehearsal", glyph: .spinner, text: "Reading page"),
@@ -114,9 +150,11 @@ struct IslandView: View {
             .opacity(0)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
+            .environment(\.isRehearsal, true)
             .task {
                 try? await Task.sleep(for: .seconds(1))
                 rehearsing = false
+                rehearsalPanel = nil
             }
         }
     }
@@ -157,6 +195,42 @@ struct IslandView: View {
     }
 }
 
+/// The body's width, fed to layout afresh on every frame of its spring.
+///
+/// Why not a plain animated `frame(width:)`: SwiftUI lays the view out once, at the final
+/// width, and then animates the size and the position of the result separately. The size
+/// took this spring; the position (the body is centred) took the slower spring of the
+/// surrounding `withAnimation`. So the right edge sprang out and overshot while the left
+/// edge crawled, up to 10 points behind. An `Animatable` modifier is handed each in-between
+/// width itself, so layout runs per frame and the body stays centred on the notch.
+private struct IslandWidth: ViewModifier, Animatable {
+    var width: CGFloat
+
+    nonisolated var animatableData: CGFloat {
+        get { width }
+        set { width = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content.frame(width: width)
+    }
+}
+
+/// The same for the height, so everything inside the body (keyline, clip, content) sees
+/// one consistent size on every frame.
+private struct IslandHeight: ViewModifier, Animatable {
+    var height: CGFloat
+
+    nonisolated var animatableData: CGFloat {
+        get { height }
+        set { height = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content.frame(height: height)
+    }
+}
+
 /// The body swells slightly while the pointer is held down, then springs back.
 private struct IslandPressStyle: ButtonStyle {
     let island: IslandModel
@@ -164,6 +238,24 @@ private struct IslandPressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .onChange(of: configuration.isPressed) { _, pressed in island.isPressed = pressed }
+    }
+}
+
+/// The panel's version of `IslandContentTransition`, for a view that stays in place:
+/// the same blur, scale and fade, driven by "shown" instead of by insertion and removal.
+/// Hidden, it takes no clicks and is invisible to VoiceOver.
+private struct PanelPresence: ViewModifier {
+    let shown: Bool
+    let motion: IslandMotion
+
+    func body(content: Content) -> some View {
+        content
+            .blur(radius: shown ? 0 : motion.blurOut)
+            .scaleEffect(shown ? 1 : motion.contentScale, anchor: .top)
+            .opacity(shown ? 1 : 0)
+            .animation(shown ? motion.contentIn : motion.contentOut, value: shown)
+            .allowsHitTesting(shown)
+            .accessibilityHidden(!shown)
     }
 }
 
@@ -314,7 +406,7 @@ private struct ActivityGlyph: View {
 
 /// A thin ring that turns. Drawn here, not a system ProgressView, so its weight and
 /// speed match the rest of the island.
-private struct SpinnerRing: View {
+struct SpinnerRing: View {
     @State private var turning = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
