@@ -35,9 +35,14 @@ final class PointerTracker {
             self?.pointerMoved()
             return event
         })
-        // A click anywhere else closes an open panel.
+        // A click anywhere else closes an open panel: on release, and only if the pointer
+        // did not travel. A press that becomes a drag (text dragged towards the island) must
+        // not close it.
         add(NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
-            Task { @MainActor in self?.clickedElsewhere() }
+            Task { @MainActor in self?.pressedAt = NSEvent.mouseLocation }
+        })
+        add(NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
+            Task { @MainActor in self?.releasedElsewhere() }
         })
         // Escape closes it too, wherever the keyboard focus is inside the panel.
         add(NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -64,6 +69,22 @@ final class PointerTracker {
         island.hover(inside)
     }
 
+    /// Where a press in another app began, to tell a click from a drag on release.
+    private var pressedAt: NSPoint?
+
+    private func releasedElsewhere() {
+        guard let start = pressedAt else { return }
+        pressedAt = nil
+        let end = NSEvent.mouseLocation
+        guard hypot(end.x - start.x, end.y - start.y) < 6 else { return }
+        clickedElsewhere()
+    }
+
+    /// Is this screen point on the island? Drop-and-save asks, during a real drag.
+    func contains(_ point: NSPoint) -> Bool {
+        hotZone.contains(point)
+    }
+
     func clickedElsewhere() {
         guard island.presentation.isPanel, !hotZone.contains(pointer) else { return }
         island.close()
@@ -79,6 +100,8 @@ final class PointerTracker {
             case .idle: body.insetBy(dx: -10, dy: 0).offsetBy(dx: 0, dy: -5)
             case .peek, .compact: body.insetBy(dx: -12, dy: 0).offsetBy(dx: 0, dy: -8)
             case .panel: body.insetBy(dx: -14, dy: 0).offsetBy(dx: 0, dy: -14)
+            // A drop target should be easy to hit and must not flap: a wide margin.
+            case .dropTarget: body.insetBy(dx: -24, dy: 0).offsetBy(dx: 0, dy: -24)
             }
         // Reach past the top edge: at the very top row the pointer's y equals the
         // screen's maxY, which a rect does not contain.

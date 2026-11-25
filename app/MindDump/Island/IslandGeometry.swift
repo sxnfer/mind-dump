@@ -67,6 +67,18 @@ struct IslandLayout: Equatable {
         )
     }
 
+    /// A drag carrying text is over the island: it opens out, wider than a peek and deep
+    /// enough for two lines below the notch (what a release will save).
+    var dropTarget: IslandMetrics {
+        IslandMetrics(
+            width: notch.width + 2 * Self.dropWing, height: notch.height + Self.dropDepth,
+            corner: 24, shoulder: 8, shadow: 0.6, keyline: 1
+        )
+    }
+
+    static let dropWing: CGFloat = 64
+    static let dropDepth: CGFloat = 52
+
     /// The open panel. `content` is the height of what sits below the notch band.
     func panel(content: CGFloat) -> IslandMetrics {
         let height = min(notch.height + content, Self.maxPanelHeight)

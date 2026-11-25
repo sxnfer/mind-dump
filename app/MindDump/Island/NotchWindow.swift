@@ -21,9 +21,16 @@ final class NotchWindow: NSPanel {
     )
 
     /// Only an open panel takes keystrokes; a closed island never steals them.
-    var takesKeyboard = false
+    var takesKeyboard = false {
+        // An open panel is not a drop target: its text box takes drops its own way.
+        didSet { hosting?.takesDrops = !takesKeyboard }
+    }
 
     private(set) var screenFrame: NSRect = .zero
+
+    /// Takes text dragged onto the island (drop-and-save, `DropModel`).
+    weak var dropReceiver: DropReceiving?
+    private var hosting: (any DropHosting)?
 
     init(rootView: some View) {
         super.init(
@@ -48,7 +55,10 @@ final class NotchWindow: NSPanel {
         animationBehavior = .none  // AppKit must not animate this window at all
         // Clicks go straight through until the pointer is on the island (AppDelegate).
         ignoresMouseEvents = true
-        contentView = NSHostingView(rootView: rootView)
+        let hosting = IslandHostingView(rootView: rootView)
+        hosting.takesDrops = true
+        contentView = hosting
+        self.hosting = hosting
     }
 
     override var canBecomeKey: Bool { takesKeyboard }
@@ -95,5 +105,112 @@ final class NotchWindow: NSPanel {
             x: screenFrame.midX - metrics.width / 2, y: screenFrame.maxY - metrics.height,
             width: metrics.width, height: metrics.height
         )
+    }
+}
+
+/// What a closed island accepts as a drop: plain text, and links from a browser. Files and
+/// images are not listed, so AppKit turns those away before we see them (most also carry
+/// text or a URL; `DropModel` refuses those itself).
+private let dropTypes: [NSPasteboard.PasteboardType] = [.string, .URL]
+
+@MainActor
+private protocol DropHosting: AnyObject {
+    var takesDrops: Bool { get set }
+}
+
+/// The window's SwiftUI host, with a drop catcher kept in front of everything in it.
+///
+/// Why a catcher of our own, in front: AppKit gives a drop to the front-most view under the
+/// pointer that registered for its types. The panel's text box stays focused while the
+/// panel is closed (taking focus again on every open cost a late frame), so its text
+/// editor stays in the window, hidden, right where the drop target opens, and it takes
+/// text. A view in front of it wins. While the panel is open, nothing here takes drops,
+/// so the box behaves as macOS made it.
+///
+/// The host registers too, in case AppKit asks `hitTest` (the catcher answers nil there,
+/// so clicks pass through to SwiftUI). Both forward to the same receiver.
+final class IslandHostingView<Content: View>: NSHostingView<Content>, DropHosting {
+    private lazy var catcher: DropCatcher = {
+        let view = DropCatcher(frame: bounds)
+        view.autoresizingMask = [.width, .height]
+        return view
+    }()
+
+    var takesDrops = false {
+        didSet {
+            if catcher.superview == nil { addSubview(catcher) }
+            if takesDrops {
+                registerForDraggedTypes(dropTypes)
+                catcher.registerForDraggedTypes(dropTypes)
+            } else {
+                unregisterDraggedTypes()
+                catcher.unregisterDraggedTypes()
+            }
+        }
+    }
+
+    /// SwiftUI adds its own views (a text field's, a scroll view's) as it needs them; the
+    /// catcher stays in front of each one.
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        guard subview !== catcher, catcher.superview === self else { return }
+        addSubview(catcher, positioned: .above, relativeTo: nil)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        catcher.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        catcher.draggingUpdated(sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        catcher.draggingExited(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        true
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        catcher.performDragOperation(sender)
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        catcher.draggingEnded(sender)
+    }
+}
+
+/// A see-through view that only receives drags and hands them to `DropModel`. Only a real
+/// drag from another app runs these lines; a debug script calls `DropModel` directly.
+private final class DropCatcher: NSView {
+    private var receiver: DropReceiving? { (window as? NotchWindow)?.dropReceiver }
+
+    /// Clicks, hovers and scrolls pass through to the island underneath.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        receiver?.draggingEntered(sender) ?? []
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        receiver?.draggingUpdated(sender) ?? []
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        receiver?.draggingExited()
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        true
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        receiver?.performDragOperation(sender) ?? false
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        receiver?.draggingEnded()
     }
 }

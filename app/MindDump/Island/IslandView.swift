@@ -78,6 +78,8 @@ struct IslandView: View {
                 CompactContent(island: island, activity: activity)
                     .id(activity.id)
                     .transition(transition)
+            case .dropTarget(let drop):
+                DropTargetContent(layout: island.layout, drop: drop).transition(transition)
             case .panel:
                 EmptyView()  // the panel is its own layer: see `panelLayer`
             }
@@ -119,6 +121,7 @@ struct IslandView: View {
         case .idle: island.layout.notch.width
         case .peek: island.layout.peek.width
         case .compact: island.layout.notch.width + 2 * IslandLayout.maxWing
+        case .dropTarget: island.layout.dropTarget.width
         }
     }
 
@@ -146,6 +149,8 @@ struct IslandView: View {
                 )
                 ActivityGlyph(glyph: .check, tint: .white)
                 ActivityGlyph(glyph: .warning, tint: .white)
+                DropTargetContent(layout: island.layout, drop: DropTarget(isLink: true, detail: "rehearsal"))
+                DropTargetContent(layout: island.layout, drop: DropTarget(isLink: false, detail: "rehearsal", isSaving: true))
             }
             .opacity(0)
             .allowsHitTesting(false)
@@ -295,7 +300,59 @@ private struct PeekContent: View {
             HealthDot(monitor: monitor)
                 .frame(width: IslandLayout.peekWing)
         }
-        .frame(height: island.layout.notch.height)
+        // Its own width, not the stack's: while it fades out under a wider presentation
+        // (the drop target) the + and dot must not slide apart.
+        .frame(width: island.layout.peek.width, height: island.layout.notch.height)
+    }
+}
+
+// MARK: - Drop target
+
+/// A drag carrying text is over the island. The wings say "drop here" and what kind of
+/// thing it is; below the notch, what a release will save. The middle of the top strip
+/// is hidden by the notch, so nothing is drawn there.
+private struct DropTargetContent: View {
+    let layout: IslandLayout
+    let drop: DropTarget
+
+    var body: some View {
+        let width = layout.dropTarget.width
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: IslandLayout.dropWing)
+                Color.clear.frame(width: layout.notch.width)
+                Text(drop.isLink ? "Link" : "Note")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .frame(width: IslandLayout.dropWing)
+            }
+            .frame(height: layout.notch.height)
+
+            VStack(spacing: 3) {
+                Text(headline)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .contentTransition(.opacity)
+                Text(drop.detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .truncationMode(drop.isLink ? .middle : .tail)
+            }
+            .lineLimit(1)
+            .padding(.horizontal, 18)
+            .padding(.top, 6)
+            .frame(width: width, alignment: .top)
+        }
+        // Laid out at the target's own width, never the stack's.
+        .frame(width: width, alignment: .top)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(headline): \(drop.detail)")
+    }
+
+    private var headline: String {
+        if drop.isSaving { return "Saving…" }
+        return drop.isLink ? "Let go to save this link" : "Let go to save this note"
     }
 }
 

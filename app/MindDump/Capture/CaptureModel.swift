@@ -28,6 +28,7 @@ final class CaptureModel {
     private let api: APIClient
     private let island: IslandModel
     private var tracking: Task<Void, Never>?
+    private var pendingRetry: (text: String, error: String)?
 
     init(api: APIClient, island: IslandModel) {
         self.api = api
@@ -48,6 +49,11 @@ final class CaptureModel {
     func panelOpened() {
         errorMessage = nil
         clipboardLink = NSPasteboard.general.string(forType: .string).flatMap(Self.webURL(in:))
+        if let retry = pendingRetry {
+            pendingRetry = nil
+            text = retry.text
+            errorMessage = retry.error  // after the text: a new text clears the error
+        }
     }
 
     func panelClosed() {
@@ -62,31 +68,46 @@ final class CaptureModel {
         isSaving = true
         defer { isSaving = false }
         do {
-            let item: APIClient.Item
-            switch saving {
+            try await store(saving, note: text.trimmingCharacters(in: .whitespacesAndNewlines))
+            text = ""
+        } catch {
+            // Stay open: the words are still in the box, and the panel says why.
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Save, then tell the island: "Saved" and the live status after it, or "Already
+    /// saved" for a link that is. Typed capture and drop-and-save both come through here.
+    /// It throws only when nothing was saved, so the caller keeps the words.
+    func store(_ kind: Kind, note: String) async throws {
+        let item: APIClient.Item
+        do {
+            switch kind {
             case .empty:
                 return
             case .link(let url):
                 item = try await api.saveLink(url)
             case .note:
-                item = try await api.saveNote(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                item = try await api.saveNote(note)
             }
-            text = ""
-            let id = "item-\(item.id)"
-            island.show(IslandActivity(id: id, glyph: .check, text: "Saved"))
-            follow(item, activityID: id, isLink: saving != .note)
         } catch APIClient.APIError.alreadySaved {
-            text = ""
             island.show(
                 IslandActivity(
                     id: "duplicate", glyph: .symbol("checkmark.circle"),
                     text: "Already saved", tint: .white.opacity(0.7)
                 )
             )
-        } catch {
-            // Stay open: the words are still in the box, and the panel says why.
-            errorMessage = error.localizedDescription
+            return
         }
+        let id = "item-\(item.id)"
+        island.show(IslandActivity(id: id, glyph: .check, text: "Saved"))
+        follow(item, activityID: id, isLink: kind != .note)
+    }
+
+    /// A drop that could not be saved: the next open puts its words in the box with the
+    /// reason under them, so Return retries. Nothing is lost.
+    func keepForRetry(_ text: String, error: String) {
+        pendingRetry = (text, error)
     }
 
     /// Live status (D11, polling): ask the backend how the worker is getting on, and keep

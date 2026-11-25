@@ -70,6 +70,18 @@ extension IslandMotion {
         )
     }
 
+    /// A drag carrying text arrives: the island opens its hand. Bigger and a touch slower
+    /// than a peek, with a small overshoot that says "yes, here". Leaving uses `dismiss`
+    /// (or `settle` back to a running pill); a release squeezes out through `collapse`.
+    @MainActor static var target: IslandMotion {
+        IslandMotion(
+            edges: spring(0.4, 0.74), body: spring(0.4, 0.74), corner: spring(0.36, 0.82, delay: 0.015),
+            shadow: spring(0.45, 1),
+            contentIn: spring(0.32, 1, delay: 0.06), contentOut: spring(0.12, 1),
+            blurIn: 8, blurOut: 5, contentScale: 0.88
+        )
+    }
+
     /// Click: open into a panel. This is islandcn's "pressExpand": the fast open that
     /// follows a press, and the one a person triggers most.
     @MainActor static var open: IslandMotion {
