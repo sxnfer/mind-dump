@@ -259,6 +259,9 @@ final class DebugScript {
                 guard !Task.isCancelled else { return }
                 await step(String(line).trimmingCharacters(in: .whitespaces))
             }
+            // Hand the pointer back to the real mouse. Without this the stand-in stays
+            // where the script left it ("away"), and the island ignores the person.
+            pointer.scriptedPointer = nil
             print("[script] done")
             fflush(stdout)
         }
