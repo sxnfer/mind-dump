@@ -49,10 +49,10 @@ final class DropModel {
     // MARK: The flow
 
     /// A drag arrived. Returns false when the island will not take it: nothing to save,
-    /// the panel is open (its box takes drops its own way), or a drop is still saving.
+    /// the capsule is open (its box takes drops its own way), or a drop is still saving.
     @discardableResult
     func entered(_ payload: Payload?, watchButton: Bool = false) -> Bool {
-        guard let payload, !isSaving, !island.presentation.isPanel else { return false }
+        guard let payload, !isSaving, !island.presentation.isOpen else { return false }
         current = payload
         island.showDropTarget(Self.target(for: payload))
         if watchButton { startWatchdog() }
@@ -71,7 +71,7 @@ final class DropModel {
     @discardableResult
     func dropped(_ payload: Payload?) -> Bool {
         watchdog?.cancel()
-        guard let payload = payload ?? current, !isSaving, !island.presentation.isPanel else {
+        guard let payload = payload ?? current, !isSaving, !island.presentation.isOpen else {
             exited()
             return false
         }
@@ -96,7 +96,7 @@ final class DropModel {
         do {
             try await capture.store(payload.kind, note: payload.text)
         } catch {
-            // Nothing was saved. Open the panel with the words in the box and the reason
+            // Nothing was saved. Open the capsule with the words in the box and the reason
             // under them, so Return retries. Never a silent loss, never a false "Saved".
             slow.cancel()
             panel.openCapture(keeping: payload.text, error: error.localizedDescription)

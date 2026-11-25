@@ -19,15 +19,13 @@ final class CaptureModel {
     var text = "" {
         didSet { if text != oldValue { errorMessage = nil } }
     }
-    /// A web link found on the clipboard when the panel opened. Offered, never taken
-    /// silently: Return saves it only while the box is empty.
-    private(set) var clipboardLink: URL?
     private(set) var errorMessage: String?
     private(set) var isSaving = false
 
     private let api: APIClient
     private let island: IslandModel
     private var tracking: Task<Void, Never>?
+    private var clearing: Task<Void, Never>?
     private var pendingRetry: (text: String, error: String)?
 
     init(api: APIClient, island: IslandModel) {
@@ -38,17 +36,17 @@ final class CaptureModel {
     /// What Return would save right now.
     var kind: Kind {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            return clipboardLink.map(Kind.link) ?? .empty
-        }
+        if trimmed.isEmpty { return .empty }
         if let url = Self.webURL(in: trimmed) { return .link(url) }
         return .note
     }
 
-    /// The panel opened: look at the clipboard once. Never in the background.
+    /// The capsule opened: put back the words of a drop that could not be saved. (Slice 1
+    /// also offered a link found on the clipboard here; San had it removed on 2026-11-25,
+    /// and the app no longer reads the clipboard at all.)
     func panelOpened() {
+        if clearing != nil { clearNow() }
         errorMessage = nil
-        clipboardLink = NSPasteboard.general.string(forType: .string).flatMap(Self.webURL(in:))
         if let retry = pendingRetry {
             pendingRetry = nil
             text = retry.text
@@ -56,10 +54,23 @@ final class CaptureModel {
         }
     }
 
+    /// The capsule closed. The box empties once the content has faded out, not in the
+    /// collapse's first frame, where the words would turn into the prompt in plain view
+    /// while the capsule goes back into the notch.
     func panelClosed() {
+        clearing?.cancel()
+        clearing = Task { [weak self] in
+            try? await Task.sleep(for: IslandMotion.seconds(0.4))
+            guard !Task.isCancelled else { return }
+            self?.clearNow()
+        }
+    }
+
+    private func clearNow() {
+        clearing?.cancel()
+        clearing = nil
         text = ""
         errorMessage = nil
-        clipboardLink = nil
     }
 
     func submit() async {
@@ -69,9 +80,11 @@ final class CaptureModel {
         defer { isSaving = false }
         do {
             try await store(saving, note: text.trimmingCharacters(in: .whitespacesAndNewlines))
-            text = ""
+            // Saved, and the capsule has gone back into the notch, which empties the box
+            // (`panelClosed`). Only if it is somehow still open is it emptied here.
+            if island.presentation.isOpen { text = "" }
         } catch {
-            // Stay open: the words are still in the box, and the panel says why.
+            // Stay open: the words are still in the box, and the capsule says why.
             errorMessage = error.localizedDescription
         }
     }

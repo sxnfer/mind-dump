@@ -35,7 +35,7 @@ final class PointerTracker {
             self?.pointerMoved()
             return event
         })
-        // A click anywhere else closes an open panel: on release, and only if the pointer
+        // A click anywhere else closes the open capsule: on release, and only if the pointer
         // did not travel. A press that becomes a drag (text dragged towards the island) must
         // not close it.
         add(NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
@@ -44,9 +44,9 @@ final class PointerTracker {
         add(NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
             Task { @MainActor in self?.releasedElsewhere() }
         })
-        // Escape closes it too, wherever the keyboard focus is inside the panel.
+        // Escape closes it too, wherever the keyboard focus is inside the capsule.
         add(NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53, let self, self.island.presentation.isPanel else { return event }
+            guard event.keyCode == 53, let self, self.island.presentation.isOpen else { return event }
             self.island.close()
             return nil
         })
@@ -86,25 +86,48 @@ final class PointerTracker {
     }
 
     func clickedElsewhere() {
-        guard island.presentation.isPanel, !hotZone.contains(pointer) else { return }
+        guard island.presentation.isOpen, !hotZone.contains(pointer) else { return }
         island.close()
     }
 
     /// The island's rect with a margin. Two sizes on purpose (hysteresis): easy to enter
     /// at the notch, and once grown you must leave the grown shape, so the hover does not
     /// flap when the body moves under a still pointer.
-    private var hotZone: NSRect {
+    ///
+    /// While the capsule is out, the zone is two rects, not one box around both: the notch
+    /// (a click there closes) and the capsule reaching up to it. One box would cover the
+    /// menu bar beside the notch, and swallow clicks on its menus.
+    private var hotZone: HotZone {
         let body = window.bodyRect(for: island.metrics)
-        let rect: NSRect =
-            switch island.presentation {
-            case .idle: body.insetBy(dx: -10, dy: 0).offsetBy(dx: 0, dy: -5)
-            case .peek, .compact: body.insetBy(dx: -12, dy: 0).offsetBy(dx: 0, dy: -8)
-            case .panel: body.insetBy(dx: -14, dy: 0).offsetBy(dx: 0, dy: -14)
-            // A drop target should be easy to hit and must not flap: a wide margin.
-            case .dropTarget: body.insetBy(dx: -24, dy: 0).offsetBy(dx: 0, dy: -24)
-            }
-        // Reach past the top edge: at the very top row the pointer's y equals the
-        // screen's maxY, which a rect does not contain.
-        return NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height + 24)
+        let top = { (rect: NSRect) in
+            // Reach past the top edge: at the very top row the pointer's y equals the
+            // screen's maxY, which a rect does not contain.
+            NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height + 24)
+        }
+        switch island.presentation {
+        case .idle:
+            return HotZone(rects: [top(body.insetBy(dx: -10, dy: 0).offsetBy(dx: 0, dy: -5))])
+        case .peek, .compact:
+            return HotZone(rects: [top(body.insetBy(dx: -12, dy: 0).offsetBy(dx: 0, dy: -8))])
+        case .open, .dropTarget:
+            // A drop target should be easy to hit and must not flap: a wider margin.
+            let margin: CGFloat = island.presentation.isOpen ? 14 : 24
+            let glass = window.capsuleRect(for: island.capsule)
+            // From the bottom of the margin up to the notch, so the gap between is inside.
+            let capsule = NSRect(
+                x: glass.minX - margin, y: glass.minY - margin,
+                width: glass.width + 2 * margin, height: body.minY - glass.minY + margin
+            )
+            return HotZone(rects: [top(body.insetBy(dx: -margin, dy: 0)), capsule])
+        }
+    }
+}
+
+/// One or more screen rects that count as "on the island".
+private struct HotZone {
+    let rects: [NSRect]
+
+    func contains(_ point: NSPoint) -> Bool {
+        rects.contains { $0.contains(point) }
     }
 }

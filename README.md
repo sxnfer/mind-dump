@@ -2,13 +2,13 @@
 
 [![CI](https://github.com/sxnfer/mind-dump/actions/workflows/ci.yml/badge.svg)](https://github.com/sxnfer/mind-dump/actions/workflows/ci.yml)
 
-An open-source "second brain" for macOS. Drop links, files, images and notes on a black panel at the notch. A local backend saves them at once, processes them in the background, and answers questions with citations. Each person runs their own copy on their own Mac, with their own AI model key.
+An open-source "second brain" for macOS. Drop links, files, images and notes on the notch, or type them into a glass capsule under it. A local backend saves them at once, processes them in the background, and answers questions with citations. Each person runs their own copy on their own Mac, with their own AI model key.
 
-> Status: Milestone 5. Press + on the panel to save the link on your clipboard, or a note; upload PDFs and images through the API. A worker reads, chunks and (with your key) embeds each item in the background. Search finds passages by exact words, by meaning, or both, with filters; an eval measures how well. Ask a question and get an answer whose every claim cites the item, page and passage, then chat about one cited passage; a daily cost cap and a rate limit keep the bill small.
+> Status: Milestone 5. Click the notch and type or paste a note or a link, or drag text onto the notch, and it is saved; upload PDFs and images through the API. A worker reads, chunks and (with your key) embeds each item in the background. Search finds passages by exact words, by meaning, or both, with filters; an eval measures how well. Ask a question and get an answer whose every claim cites the item, page and passage, then chat about one cited passage; a daily cost cap and a rate limit keep the bill small.
 
 ## Run it
 
-You need Docker Desktop and Xcode.
+You need Docker Desktop, and Xcode 26 or later. The Mac app needs macOS 26 or later (it uses Liquid Glass).
 
 ```bash
 # 1. Settings: copy the example and set a database password
@@ -21,7 +21,7 @@ docker compose up -d --wait api worker
 curl -i http://localhost:8000/health          # {"status":"ok"}
 open http://localhost:8000/docs               # generated API docs
 
-# 3. Mac app: the island at the notch. Move the pointer to the notch, click, type, Return.
+# 3. Mac app (macOS 26 or later): the island at the notch. Move the pointer to the notch, click, type, Return.
 xcodebuild -project app/MindDump.xcodeproj -scheme MindDump -derivedDataPath app/build/dd build
 open app/build/dd/Build/Products/Debug/MindDump.app
 ```
@@ -151,13 +151,13 @@ docker compose exec worker python -m mind_dump.embed_missing      # embed what w
 
 Run `embed_missing` again after changing `EMBEDDING_MODEL` or `EMBEDDING_PROVIDER`: vectors from two models can't be compared, so the chunks are embedded again in place. When keys are set, item text goes to OpenAI (or Voyage AI, if chosen), and images, questions and the passages the agent reads go to Anthropic.
 
-Right-click the panel to quit. The app is unsigned (see `docs/decisions/`), so build it from source.
+Right-click the notch or the capsule to quit. The app is unsigned (see `docs/decisions/`), so build it from source.
 
 `docker compose down` stops everything and keeps your data (the database and the landed pages, in two volumes). `docker compose down -v` deletes the data too.
 
 ## Develop the Mac app
 
-The app is one black "island" that hangs from the notch (`app/MindDump/Island/`). The window never moves; only the island's body changes size inside it, on springs. The open panel has two modes, Capture and Ask (Tab switches). Ask streams an answer with numbered sources from `POST /ask` (`app/MindDump/Ask/`).
+The app is a black "island" that hangs from the notch, and a Liquid Glass capsule that comes out from under it (`app/MindDump/Island/`, `app/MindDump/Panel/CapsuleView.swift`). The window never moves; only the two shapes change size inside it, on springs. The capsule has two modes, Capture and Ask (the round button or Tab flips them). Ask streams an answer with numbered sources from `POST /ask` (`app/MindDump/Ask/`), and the capsule grows into a card for it. Text dragged onto the notch is saved when you let go (`app/MindDump/Capture/DropModel.swift`).
 
 Debug builds carry these aids, mostly in `app/MindDump/Support/Debug.swift`:
 
@@ -167,15 +167,16 @@ APP=app/build/dd/Build/Products/Debug/MindDump.app
 MD_MOTION_SCALE=8 "$APP/Contents/MacOS/MindDump"      # everything eight times slower
 MD_ASK_FIXTURE=1 "$APP/Contents/MacOS/MindDump"       # Ask plays canned answers: no model call, no cost
 MD_REDUCE_MOTION=1 "$APP/Contents/MacOS/MindDump"     # behave as if Reduce Motion were on
+MD_REDUCE_TRANSPARENCY=1 "$APP/Contents/MacOS/MindDump"  # a solid dark capsule, as with Reduce Transparency
 MD_API_BASE=http://127.0.0.1:18000 "$APP/..."         # talk to a throwaway backend, not your items
 notifyutil -p io.github.sxnfer.MindDump.debug.open    # drive it from a shell: peek, open, close, saved, film, script
 ```
 
 Each transition prints a line such as `[frames] open: 156 frames, median 8.33 ms (120 Hz), worst 8.33 ms, late 0`. A late frame is a dropped frame. A whole answer stream is timed as one line, `[frames] stream: …`.
 
-The canned answers pick a script from a word in the question: `long` (passes the panel's height), `nothing` (not from your items), `fail` (an error mid-stream), `limit` (429), `key` (no Claude key); anything else gets a short answer with two sources.
+The canned answers pick a script from a word in the question: `long` (passes the card's height), `nothing` (not from your items), `fail` (an error mid-stream), `limit` (429), `key` (no Claude key); anything else gets a short answer with two sources.
 
-`script` plays `<app temp folder>/script.txt`, one step per line: `pointer notch|away`, `click`, `click away`, `click <control>` (`mode-ask`, `mode-capture`, `new-question`, `source-1`, `open-1`, …), `type …`, `key return|escape|tab|cmd-n`, `scroll <points>`, `measure <name>`, `wait <s>`, `film`, `snap`.
+`script` plays `<app temp folder>/script.txt`, one step per line: `pointer notch|away`, `click` (the notch), `click away`, `click <control>` (`mode`, `send`, `new-question`, `source-1`, `open-1`, …), `type …`, `key return|escape|tab|cmd-n`, `scroll <points>`, `drag <text>`, `dragexit`, `drop`, `measure <name>`, `wait <s>`, `film`, `snap`, `backdrop white|dark|busy|off` (a window of ours behind the capsule) and `shot` (a still of the screen there, to see the glass), `boxsize`. The full list is at the top of `DebugScript` in `Debug.swift`.
 
 ## Develop the backend
 

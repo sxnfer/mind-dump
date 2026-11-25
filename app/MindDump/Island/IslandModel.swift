@@ -30,14 +30,17 @@ struct DropTarget: Equatable {
 }
 
 /// What the island is showing. The view draws this; it holds no logic.
+///
+/// The first three are the black body at the notch. The last two bring out the glass
+/// capsule under it, while the body rests as the bare notch.
 enum IslandPresentation: Equatable {
     case idle                       // the bare notch
     case peek                       // pointer is over it
     case compact(IslandActivity)    // a status pill
-    case dropTarget(DropTarget)     // a drag carrying text is over it
-    case panel                      // open
+    case dropTarget(DropTarget)     // a drag carrying text is over it: the capsule is the target
+    case open                       // the capsule: the box, and the answer card in Ask
 
-    var isPanel: Bool { self == .panel }
+    var isOpen: Bool { self == .open }
 
     var isDropTarget: Bool {
         if case .dropTarget = self { true } else { false }
@@ -46,14 +49,16 @@ enum IslandPresentation: Equatable {
 
 /// The island's state machine and choreography.
 ///
-/// It owns three things that must change together: the presentation (what content shows),
-/// the metrics (how big the body is) and the motion (which springs carry the change).
-/// Every transition is one method here, so the timing lives in one place.
+/// It owns four things that must change together: the presentation (what content shows),
+/// the metrics (how big the black body is), the capsule (where and how big the glass is)
+/// and the motion (which springs carry the change). Every transition is one method here,
+/// so the timing lives in one place.
 @MainActor
 @Observable
 final class IslandModel {
     private(set) var presentation: IslandPresentation = .idle
     private(set) var metrics: IslandMetrics
+    private(set) var capsule: CapsuleMetrics
     private(set) var motion: IslandMotion = .settle
     /// True while the pointer is held down on the island: the body swells a little.
     var isPressed = false
@@ -62,29 +67,40 @@ final class IslandModel {
         didSet {
             guard layout != oldValue else { return }
             metrics = target(for: presentation)
+            capsule = capsuleTarget(for: presentation)
         }
     }
 
-    /// The panel's content height, measured by the view once it has laid out.
-    private(set) var panelContentHeight: CGFloat = 73
+    /// The capsule's content height, measured by the view once it has laid out.
+    private(set) var capsuleContentHeight: CGFloat = IslandLayout.capsuleHeight
     /// Wing widths the current pill needs, measured by the view.
     private var compactWings = CGSize(width: 44, height: 44)
 
     /// System "Reduce motion". The view keeps this in sync.
-    var reduceMotion = false
+    var reduceMotion = false {
+        didSet {
+            // With it on, a closed capsule waits where it opens, hidden, so the next open
+            // only fades it in: nothing travels out of the notch.
+            guard reduceMotion, !capsule.shown else { return }
+            var resting = layout.capsule(content: capsuleContentHeight)
+            resting.shown = false
+            capsule = resting
+        }
+    }
 
-    /// The window listens: an open panel takes the keyboard, anything else gives it back.
-    var onPanelChange: ((Bool) -> Void)?
-    /// Called just before the panel starts to close, before the collapse is applied, so
+    /// The window listens: an open capsule takes the keyboard, anything else gives it back.
+    var onOpenChange: ((Bool) -> Void)?
+    /// Called just before the capsule starts to close, before the collapse is applied, so
     /// work that would land in the collapse's first frame can be stopped first.
-    var onPanelWillClose: (() -> Void)?
+    var onWillClose: (() -> Void)?
     /// Called for every transition, so the frame monitor can time it.
     var onTransition: ((String) -> Void)?
 
     private var isHovering = false
     /// Debug only: a script is standing in for the pointer, so ignore the real one.
     var hoverIsScripted = false
-    /// First leg of a collapse: the body is aiming at the notch, not at the pill yet.
+    /// First leg of a collapse: the capsule is going back into the notch, and the body
+    /// waits there before it opens out to the pill.
     private var isCollapsingToNotch = false
     private var lastTransition = ContinuousClock.now
     private var lastContentChange = ContinuousClock.now - .seconds(10)
@@ -103,6 +119,7 @@ final class IslandModel {
     init(layout: IslandLayout = .fallback) {
         self.layout = layout
         metrics = layout.idle
+        capsule = layout.tucked
     }
 
     // MARK: Intent
@@ -125,29 +142,29 @@ final class IslandModel {
         }
     }
 
-    /// A click on the island.
+    /// A click on the notch.
     func toggle() {
-        presentation.isPanel ? close() : open()
+        presentation.isOpen ? close() : open()
     }
 
     func open() {
-        guard !presentation.isPanel else { return }
+        guard !presentation.isOpen else { return }
         parked = nil
         dropReleased = false
         NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
-        go(.panel, with: .open, name: "open")
+        go(.open, with: .open, name: "open")
     }
 
-    /// Close the panel with nothing to report: straight back to the notch (or a peek, if
-    /// the pointer is still there).
+    /// Close with nothing to report: the capsule goes back into the notch (and the body
+    /// peeks, if the pointer is still there).
     func close() {
-        guard presentation.isPanel else { return }
+        guard presentation.isOpen else { return }
         go(isHovering ? .peek : .idle, with: .dismiss, name: "close")
     }
 
-    /// Show a status pill. From an open panel (or a released drop target) this is a
-    /// collapse: the body first aims at the bare notch, then opens out to the pill, which
-    /// reads as a squeeze and release.
+    /// Show a status pill. From the open capsule (or a released drop target) this is a
+    /// collapse: the capsule goes back up into the notch, and as it arrives the body opens
+    /// out to the pill, which reads as the notch swallowing it and answering.
     func show(_ activity: IslandActivity) {
         if presentation.isDropTarget && !dropReleased {
             // A status for an earlier item while a drag is over the island. Changing shape
@@ -155,9 +172,9 @@ final class IslandModel {
             parked = activity
             return
         }
-        // A released drop squeezes into its pill the same way a closing panel does.
+        // A released drop goes into its pill the same way a save from the box does.
         let fromDrop = presentation.isDropTarget
-        let fromLarge = presentation.isPanel || fromDrop
+        let fromLarge = presentation.isOpen || fromDrop
         parked = nil
         dropReleased = false
         if case .compact(let current) = presentation, current.id == activity.id {
@@ -167,7 +184,10 @@ final class IslandModel {
         }
         if fromLarge && !reduceMotion {
             sequence?.cancel()
-            apply(.compact(activity), metrics: layout.idle, motion: .collapse, name: fromDrop ? "drop" : "collapse")
+            apply(
+                .compact(activity), metrics: layout.idle, capsule: layout.tucked, motion: .collapse,
+                name: fromDrop ? "drop" : "collapse"
+            )
             isCollapsingToNotch = true
             sequence = Task { [weak self] in
                 try? await Task.sleep(for: IslandMotion.seconds(IslandMotion.collapseRetarget))
@@ -175,7 +195,7 @@ final class IslandModel {
                 self.isCollapsingToNotch = false
                 self.apply(
                     .compact(activity), metrics: self.target(for: .compact(activity)),
-                    motion: .settle, name: fromDrop ? "drop-settle" : "collapse-settle"
+                    capsule: self.capsule, motion: .settle, name: fromDrop ? "drop-settle" : "collapse-settle"
                 )
                 await self.holdThenDismiss(activity.hold)
             }
@@ -193,10 +213,10 @@ final class IslandModel {
 
     // MARK: Drop target
 
-    /// A drag carrying text is over the island: open up and say what a release saves.
-    /// Not over an open panel; its text box takes drops in its own way.
+    /// A drag carrying text is over the notch: bring the capsule out as the target and say
+    /// what a release saves. Not over the open capsule; its box takes drops in its own way.
     func showDropTarget(_ drop: DropTarget) {
-        guard !presentation.isPanel else { return }
+        guard !presentation.isOpen else { return }
         if case .dropTarget(let current) = presentation {
             guard current != drop else { return }
             // Same drag, new words ("Saving"): change in place.
@@ -223,7 +243,7 @@ final class IslandModel {
     }
 
     /// The drag was released over the island. Nothing moves yet: the save's result (a
-    /// pill, or the panel on failure) is the next transition.
+    /// pill, or the open capsule on failure) is the next transition.
     func dropTargetReleased() {
         guard presentation.isDropTarget else { return }
         dropReleased = true
@@ -239,25 +259,26 @@ final class IslandModel {
 
     // MARK: Measurements from the view
 
-    func panelContentMeasured(_ height: CGFloat) {
-        guard abs(height - panelContentHeight) > 0.5 else { return }
-        panelContentHeight = height
-        guard presentation.isPanel else { return }
-        // Already open and settled: the content grew or shrank in place. While the panel
-        // is still opening, keep its springs and only move the target.
+    func capsuleContentMeasured(_ height: CGFloat) {
+        guard abs(height - capsuleContentHeight) > 0.5 else { return }
+        capsuleContentHeight = height
+        guard presentation.isOpen else { return }
+        // Already open and settled: the content grew or shrank in place (an answer card,
+        // an error line). While the capsule is still opening, keep its springs and only
+        // move the target.
         if !isMidTransition { use(reduceMotion ? .reduced : .resize) }
-        metrics = target(for: .panel)
+        capsule = capsuleTarget(for: .open)
         // A resize that a named change (a mode switch) just caused is part of that change.
         let named = ContinuousClock.now - lastContentChange < IslandMotion.seconds(0.3)
         if !isMidTransition && !named { onTransition?("resize") }
     }
 
-    /// The open panel's content is about to change in place (a mode switch, a new
+    /// The open capsule's content is about to change in place (a mode switch, a new
     /// answer, sources coming in). Content crosses over and the height follows on the
     /// resize springs, not on whatever transition ran last.
-    func panelContentWillChange(_ name: String) {
-        guard presentation.isPanel else { return }
-        // While the panel is still opening, its own springs keep the shape.
+    func capsuleContentWillChange(_ name: String) {
+        guard presentation.isOpen else { return }
+        // While the capsule is still opening, its own springs keep the shape.
         if !isMidTransition { use(reduceMotion ? .reduced : .resize) }
         lastContentChange = .now
         onTransition?(name)
@@ -282,13 +303,26 @@ final class IslandModel {
         if motion != next { motion = next }
     }
 
+    /// The black body. While the capsule is out, the body rests as the bare notch.
     private func target(for presentation: IslandPresentation) -> IslandMetrics {
         switch presentation {
-        case .idle: layout.idle
+        case .idle, .open, .dropTarget: layout.idle
         case .peek: layout.peek
         case .compact: layout.compact(leading: compactWings.width, trailing: compactWings.height)
-        case .dropTarget: layout.dropTarget
-        case .panel: layout.panel(content: panelContentHeight)
+        }
+    }
+
+    /// The glass capsule.
+    private func capsuleTarget(for presentation: IslandPresentation) -> CapsuleMetrics {
+        switch presentation {
+        case .open: return layout.capsule(content: capsuleContentHeight)
+        case .dropTarget: return layout.dropCapsule
+        case .idle, .peek, .compact:
+            // Reduce Motion: it fades where it is, with no trip into the notch.
+            guard reduceMotion else { return layout.tucked }
+            var here = capsule
+            here.shown = false
+            return here
         }
     }
 
@@ -297,19 +331,20 @@ final class IslandModel {
     ) {
         sequence?.cancel()
         sequence = nil
-        apply(next, metrics: target(for: next), motion: motion, name: name)
+        apply(next, metrics: target(for: next), capsule: capsuleTarget(for: next), motion: motion, name: name)
         if case .compact = next, let hold {
             sequence = Task { [weak self] in await self?.holdThenDismiss(hold) }
         }
     }
 
-    /// The one place state changes. Presentation, size and springs move in the same
+    /// The one place state changes. Presentation, sizes and springs move in the same
     /// update, so the view never sees a new size with the old springs.
     private func apply(
-        _ next: IslandPresentation, metrics: IslandMetrics, motion: IslandMotion, name: String
+        _ next: IslandPresentation, metrics: IslandMetrics, capsule: CapsuleMetrics, motion: IslandMotion,
+        name: String
     ) {
-        let wasPanel = presentation.isPanel
-        if wasPanel && !next.isPanel { onPanelWillClose?() }
+        let wasOpen = presentation.isOpen
+        if wasOpen && !next.isOpen { onWillClose?() }
         let chosen = reduceMotion ? IslandMotion.reduced : motion
         isCollapsingToNotch = false
         lastTransition = .now
@@ -319,8 +354,9 @@ final class IslandModel {
         withAnimation(IslandMotion.spring(0.6, 1)) {
             presentation = next
             self.metrics = metrics
+            self.capsule = capsule
         }
-        if next.isPanel != wasPanel { onPanelChange?(next.isPanel) }
+        if next.isOpen != wasOpen { onOpenChange?(next.isOpen) }
         onTransition?(name)
     }
 
@@ -329,9 +365,7 @@ final class IslandModel {
         try? await Task.sleep(for: IslandMotion.seconds(hold))
         guard !Task.isCancelled, case .compact = presentation else { return }
         sequence = nil
-        apply(
-            isHovering ? .peek : .idle, metrics: target(for: isHovering ? .peek : .idle),
-            motion: .dismiss, name: "dismiss"
-        )
+        let next: IslandPresentation = isHovering ? .peek : .idle
+        apply(next, metrics: target(for: next), capsule: capsuleTarget(for: next), motion: .dismiss, name: "dismiss")
     }
 }

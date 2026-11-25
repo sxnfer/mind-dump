@@ -8,7 +8,7 @@ import Foundation
 /// (some split in the middle of a `[c:…]` marker), then `final`. Which script plays
 /// depends on a word in the question:
 ///
-///     long     a long answer that passes the panel's maximum height
+///     long     a long answer that passes the capsule's maximum height
 ///     nothing  an answer not found in the items (not grounded)
 ///     fail     a few sentences, then an "error" event mid-stream
 ///     limit    a 429 before the stream starts (rate limit)

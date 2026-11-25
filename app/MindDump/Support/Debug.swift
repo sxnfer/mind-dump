@@ -184,10 +184,32 @@ final class FilmRecorder {
         let function = unsafeBitCast(symbol, to: Function.self)
         // 8 = only this window; 1 | 16 = ignore the window frame, one pixel per point.
         let image = function(.null, 8, UInt32(window.windowNumber), 1 | 16)?.takeRetainedValue()
-        // Keep the top strip, where the island lives.
-        guard let image else { return nil }
-        let height = min(image.height, 470)
-        return image.cropping(to: CGRect(x: 0, y: 0, width: image.width, height: height))
+        return image
+    }
+
+    /// One still of the screen where the island is, with whatever is behind it: the only
+    /// way to see what the glass does to the backdrop. Without the Screen Recording
+    /// permission the system leaves other apps' windows out, so put the debug backdrop
+    /// (`DebugBackdrop`, which is ours) behind the capsule first.
+    func shot() {
+        typealias Function = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard
+            let window, let screen = window.screen,
+            let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage")
+        else { return }
+        let function = unsafeBitCast(symbol, to: Function.self)
+        // CoreGraphics rects start at the top-left of the main screen.
+        let top = NSScreen.screens.first?.frame.maxY ?? screen.frame.maxY
+        let frame = window.frame
+        let rect = CGRect(x: frame.minX, y: top - frame.maxY, width: frame.width, height: frame.height)
+        // 1 = every window on screen in that rect; 16 = one pixel per point.
+        guard let image = function(rect, 1, 0, 16)?.takeRetainedValue() else {
+            print("[film] shot: no image")
+            fflush(stdout)
+            return
+        }
+        reel += 1
+        write([(0, image)], name: "shot-\(reel)")
     }
 
     private func write(_ frames: [(time: Double, image: CGImage)], name: String) {
@@ -220,21 +242,29 @@ final class FilmRecorder {
 ///     notifyutil -p io.github.sxnfer.MindDump.debug.script
 ///
 ///     pointer notch | away      move the stand-in pointer
-///     click                     press and release on the island
+///     click                     press and release on the notch (opens, or closes)
 ///     click away                press somewhere else on the screen
 ///     type Buy oat milk         one key event per character
 ///     key return | escape | tab | cmd-n
-///     click mode-ask            press a named control (see `debugTarget`): mode-ask,
-///                               mode-capture, new-question, source-1, open-1, …
-///     scroll -120               scroll wheel over the answer (negative: towards the top)
+///     click mode                press a named control (see `debugTarget`): mode (the
+///                               round button that flips Capture and Ask), send,
+///                               new-question, source-1, open-1, …
+///     scroll 120                scroll wheel over the answer card (here positive moved
+///                               towards the top; the sign follows the scroll setting)
 ///     drag Some text            a drag carrying this text arrives (`DropModel.entered`)
 ///     dragexit                  it leaves without a release (`DropModel.exited`)
 ///     drop [Some text]          release it (`DropModel.dropped`); no text: the one over it
 ///                               (in drag and drop text, \n is a new line and \t a tab)
 ///     dragtypes                 list the views that take drags, and their types
+///     boxsize                   the box's laid-out width against the width its text
+///                               editor wraps at
 ///     measure typing            time the next 1.3 s under this name
 ///     wait 0.5                  seconds, in animation time
-///     film | snap               start a reel / take one still
+///     film | snap               start a reel / take one still of the app's window
+///     backdrop white | dark | busy | off
+///                               a window of ours behind the island, to see the glass over
+///                               a bright page, a dark one, or a busy picture
+///     shot                      one still of the screen there, backdrop included
 @MainActor
 final class DebugScript {
     private let window: NotchWindow
@@ -283,12 +313,10 @@ final class DebugScript {
         switch verb {
         case "pointer":
             let body = window.bodyRect(for: island.metrics)
-            pointer.scriptedPointer =
-                rest == "away" ? NSPoint(x: body.midX, y: body.minY - 300) : NSPoint(x: body.midX, y: body.maxY - 6)
+            pointer.scriptedPointer = rest == "away" ? awayPoint : NSPoint(x: body.midX, y: body.maxY - 6)
         case "click":
             if rest == "away" {
-                let body = window.bodyRect(for: island.metrics)
-                pointer.scriptedPointer = NSPoint(x: body.midX, y: body.minY - 300)
+                pointer.scriptedPointer = awayPoint
                 pointer.clickedElsewhere()  // what the global click monitor would call
             } else if rest.isEmpty {
                 let body = window.bodyRect(for: island.metrics)
@@ -312,6 +340,8 @@ final class DebugScript {
             try? await Task.sleep(for: IslandMotion.seconds(Double(rest) ?? 0.5))
         case "film": film.film()
         case "snap": film.snap()
+        case "shot": film.shot()
+        case "backdrop": DebugBackdrop.show(rest, under: window)
         case "measure": onMeasure?(rest)
         case "drag":
             let payload = DropModel.payload(text: Self.unescape(rest))
@@ -327,6 +357,8 @@ final class DebugScript {
             print("[script] drop: \(taken ? "saving " + described : "refused")")
         case "dragtypes":
             dragTypes()
+        case "boxsize":
+            boxSize()
         default: print("[script] unknown: \(line)")
         }
     }
@@ -343,7 +375,7 @@ final class DebugScript {
     }
 
     /// Which views in the window would take a drop, deepest last. Shows what a text drop on
-    /// the open panel does without making one.
+    /// the open capsule does without making one.
     private func dragTypes() {
         func walk(_ view: NSView, depth: Int) {
             let types = view.registeredDraggedTypes
@@ -361,6 +393,22 @@ final class DebugScript {
         fflush(stdout)
     }
 
+    /// The box's width as SwiftUI laid it out, against the width the text editor inside
+    /// it wraps at. The two must agree, or text wraps before it reaches the edge.
+    private func boxSize() {
+        let box = DebugTargets.frames["box"]?.frame ?? .zero
+        var line = "[script] boxsize: box \(Int(box.width))x\(Int(box.height))"
+        if let editor = window.firstResponder as? NSTextView {
+            let container = editor.textContainer?.size.width ?? 0
+            line += ", editor \(Int(editor.frame.width)), wraps at \(Int(container))"
+            if let layout = editor.layoutManager, let text = editor.textContainer {
+                line += ", text \(Int(layout.usedRect(for: text).width)) wide"
+            }
+        }
+        print(line)
+        fflush(stdout)
+    }
+
     /// The centre of a named control, on screen (see `debugTarget`).
     private func target(_ name: String) -> NSPoint? {
         // Only controls on screen now count: a target that is gone (or was only ever in
@@ -373,9 +421,9 @@ final class DebugScript {
         // SwiftUI's global frame starts at the window's top-left; AppKit's at the bottom-left.
         let inWindow = NSPoint(x: frame.midX, y: content.bounds.height - frame.midY)
         let point = window.convertPoint(toScreen: inWindow)
-        // On screen means inside the island's body, and inside the answer's visible area
-        // when the control scrolls with the answer.
-        var visible = window.bodyRect(for: island.metrics)
+        // On screen means inside the capsule (or the body), and inside the answer's visible
+        // area when the control scrolls with the answer.
+        var visible = window.capsuleRect(for: island.capsule).union(window.bodyRect(for: island.metrics))
         if name.hasPrefix("source-") || name.hasPrefix("open-"), let scrollView = answerScrollView() {
             let shown = scrollView.convert(scrollView.bounds, to: nil)
             visible = visible.intersection(window.convertToScreen(shown))
@@ -407,11 +455,11 @@ final class DebugScript {
         NSApp.postEvent(event, atStart: false)
     }
 
-    /// A scroll wheel turn over the answer, near the bottom of the open panel. (Not a
-    /// named target: tracking the scroll view's frame on every scroll step cost frames.)
+    /// A scroll wheel turn over the answer, near the bottom of the card. (Not a named
+    /// target: tracking the scroll view's frame on every scroll step cost frames.)
     private func scroll(by points: Double) {
-        let body = window.bodyRect(for: island.metrics)
-        let point = NSPoint(x: body.midX, y: body.minY + 90)
+        let card = window.capsuleRect(for: island.capsule)
+        let point = NSPoint(x: card.midX, y: card.minY + 60)
         pointer.scriptedPointer = point
         guard
             let cgEvent = CGEvent(
@@ -429,6 +477,13 @@ final class DebugScript {
         guard let event = NSEvent(cgEvent: cgEvent), let scrollView = answerScrollView() else { return }
         // Straight to the answer's scroll view: the wheel event has no window position.
         scrollView.scrollWheel(with: event)
+        print("[script] scroll \(Int(points)) in a \(Int(scrollView.frame.height))-point scroll view")
+    }
+
+    /// Far below the island, on the screen: "somewhere else".
+    private var awayPoint: NSPoint {
+        let card = window.capsuleRect(for: island.capsule)
+        return NSPoint(x: card.midX, y: window.frame.minY - 200)
     }
 
     /// The tallest scroll view in the window: the answer's (the box has a small one).
@@ -452,6 +507,76 @@ final class DebugScript {
             else { continue }
             NSApp.postEvent(event, atStart: false)
         }
+    }
+}
+
+/// A plain window of ours, just under the island's, so a still can show the glass over a
+/// known backdrop: white (the hardest case for white text), dark, or a busy picture of
+/// colour bands and text. It ignores the mouse. Debug builds only.
+@MainActor
+enum DebugBackdrop {
+    private static var window: NSWindow?
+
+    static func show(_ kind: String, under island: NSWindow) {
+        window?.orderOut(nil)
+        window = nil
+        guard kind != "off" else {
+            print("[script] backdrop off")
+            return
+        }
+        let frame = island.frame
+        let backdrop = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+        backdrop.level = NSWindow.Level(rawValue: island.level.rawValue - 1)
+        backdrop.ignoresMouseEvents = true
+        backdrop.isReleasedWhenClosed = false
+        backdrop.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        backdrop.contentView = NSHostingView(rootView: BackdropPicture(kind: kind))
+        backdrop.setFrame(frame, display: true)
+        backdrop.orderFrontRegardless()
+        window = backdrop
+        print("[script] backdrop \(kind)")
+        fflush(stdout)
+    }
+}
+
+private struct BackdropPicture: View {
+    let kind: String
+
+    var body: some View {
+        switch kind {
+        case "white":
+            page(Color(white: 0.98), ink: Color(white: 0.15))
+        case "dark":
+            page(Color(white: 0.1), ink: Color(white: 0.85))
+        default:
+            ZStack {
+                LinearGradient(
+                    colors: [.orange, .pink, .purple, .blue, .teal, .yellow],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+                HStack(spacing: 14) {
+                    ForEach(0..<24, id: \.self) { index in
+                        Rectangle().fill(index.isMultiple(of: 2) ? Color.white : Color.black).frame(width: 8)
+                    }
+                }
+                .opacity(0.5)
+                .rotationEffect(.degrees(20))
+                page(.clear, ink: .black)
+            }
+        }
+    }
+
+    private func page(_ paper: Color, ink: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(0..<18, id: \.self) { _ in
+                Text("Tram 28 starts at Martim Moniz; go before nine to get a seat. Walk down through Alfama after.")
+                    .font(.system(size: 14))
+            }
+        }
+        .foregroundStyle(ink)
+        .padding(30)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(paper)
     }
 }
 #endif

@@ -17,7 +17,7 @@ struct IslandMotion: Equatable {
     var body: Animation
     /// Bottom corner radius. Starts a beat after the height so the corner "catches up".
     var corner: Animation
-    /// Shadow strength. Trails the shape, so the panel lifts off after it has grown.
+    /// Shadow strength. Trails the shape, so a grown body lifts off after it has grown.
     var shadow: Animation
     /// Content coming in: waits until the shape is mostly there.
     var contentIn: Animation
@@ -27,6 +27,8 @@ struct IslandMotion: Equatable {
     var blurIn: CGFloat
     var blurOut: CGFloat
     var contentScale: CGFloat
+    /// Reduce Motion: the glass fades where it is instead of travelling.
+    var isReduced = false
 }
 
 extension IslandMotion {
@@ -70,9 +72,9 @@ extension IslandMotion {
         )
     }
 
-    /// A drag carrying text arrives: the island opens its hand. Bigger and a touch slower
+    /// A drag carrying text arrives: the capsule comes out as the target. A touch slower
     /// than a peek, with a small overshoot that says "yes, here". Leaving uses `dismiss`
-    /// (or `settle` back to a running pill); a release squeezes out through `collapse`.
+    /// (or `settle` back to a running pill); a release goes in through `collapse`.
     @MainActor static var target: IslandMotion {
         IslandMotion(
             edges: spring(0.4, 0.74), body: spring(0.4, 0.74), corner: spring(0.36, 0.82, delay: 0.015),
@@ -82,7 +84,7 @@ extension IslandMotion {
         )
     }
 
-    /// Click: open into a panel. This is islandcn's "pressExpand": the fast open that
+    /// Click: the capsule comes out of the notch. This is islandcn's "pressExpand": the fast open that
     /// follows a press, and the one a person triggers most.
     @MainActor static var open: IslandMotion {
         IslandMotion(
@@ -94,9 +96,9 @@ extension IslandMotion {
         )
     }
 
-    /// Panel to a small status pill ("Saved"). First leg only: the model aims at the
-    /// notch, then retargets with `settle`, which gives the waist-and-rebound of a
-    /// collapse instead of a plain shrink.
+    /// The capsule to a small status pill ("Saved"). First leg only: the capsule goes back
+    /// into the notch while the body waits there, then the model retargets with `settle`
+    /// and the body opens out to the pill: swallowed, then answered.
     @MainActor static var collapse: IslandMotion {
         IslandMotion(
             edges: spring(0.479, 0.894), body: spring(0.453, 0.928),
@@ -138,7 +140,7 @@ extension IslandMotion {
         )
     }
 
-    /// The panel's content changed height in place (a second line of text, an error).
+    /// The capsule's content changed height in place (an error line, the answer card).
     @MainActor static var resize: IslandMotion {
         IslandMotion(
             edges: spring(0.5, 0.82), body: spring(0.5, 0.82), corner: spring(0.5, 0.82),
@@ -156,8 +158,22 @@ extension IslandMotion {
             edges: ease, body: ease, corner: ease, shadow: ease,
             contentIn: Animation.easeIn(duration: 0.1 * timeScale).delay(0.1 * timeScale),
             contentOut: Animation.easeOut(duration: 0.1 * timeScale),
-            blurIn: 0, blurOut: 0, contentScale: 1
+            blurIn: 0, blurOut: 0, contentScale: 1, isReduced: true
         )
+    }
+
+    /// The glass capsule turns on at once: it starts tucked inside the notch, behind the
+    /// black body, so there is nothing to fade; the springs bring it out.
+    @MainActor var glassIn: Animation {
+        isReduced ? .easeOut(duration: 0.2 * Self.timeScale) : .easeOut(duration: 0.05 * Self.timeScale)
+    }
+
+    /// It turns off only once it is back inside the notch, so it never fades in view; then
+    /// the glass stops drawing.
+    @MainActor var glassOut: Animation {
+        isReduced
+            ? .easeOut(duration: 0.2 * Self.timeScale)
+            : .easeIn(duration: 0.08 * Self.timeScale).delay(0.26 * Self.timeScale)
     }
 
     // MARK: Timings that sequence the springs

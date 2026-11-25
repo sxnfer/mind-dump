@@ -1,11 +1,15 @@
 import SwiftUI
 
-/// The island: one true-black body that hangs from the notch, and the content inside it.
+/// The island: one true-black body that hangs from the notch, and under it the glass
+/// capsule that is the box, the answer card and the drop target.
 ///
-/// The window never moves or resizes. Only this view's body changes size, and each of its
-/// dimensions follows its own spring (see `IslandMotion`). That is the difference from
+/// The window never moves or resizes. Only these two shapes change size inside it, and
+/// each dimension follows its own spring (see `IslandMotion`). That is the difference from
 /// animating a window frame: here SwiftUI drives every frame at the display's refresh rate
 /// and can retarget a spring mid-flight without a jump.
+///
+/// Why two shapes: the notch is black hardware, so whatever touches it must be black
+/// (glass there would have nothing behind it to bend). The glass sits apart, under it.
 struct IslandView: View {
     let island: IslandModel
     let panel: PanelModel
@@ -18,14 +22,45 @@ struct IslandView: View {
     @State private var rehearsalPanel: PanelModel?
 
     var body: some View {
+        ZStack(alignment: .top) {
+            // Behind the body: closed, the capsule is tucked up inside the notch, where
+            // the black body covers it.
+            capsuleLayer
+            blackBody
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(alignment: .top) { rehearsal }
+        .onAppear { if rehearsing { rehearsalPanel = PanelModel.rehearsal(island: island) } }
+        .foregroundStyle(.white)
+        // White text on both: the black body, and the glass kept dark (`CapsuleSurface`).
+        .environment(\.colorScheme, .dark)
+        .onExitCommand { island.close() }  // Escape
+        .onChange(of: reduceMotion, initial: true) { _, on in island.reduceMotion = on || Self.forceReduceMotion }
+        .contextMenu {
+            // No Dock icon or menu bar, so right-click is the way to quit.
+            Button("Quit Mind Dump") { NSApp.terminate(nil) }
+        }
+    }
+
+    /// Debug builds: `MD_REDUCE_MOTION=1` acts as if Reduce Motion were on, to check that
+    /// path without changing a system setting.
+    private static var forceReduceMotion: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.environment["MD_REDUCE_MOTION"] == "1"
+        #else
+        false
+        #endif
+    }
+
+    // MARK: Black body
+
+    private var blackBody: some View {
         let metrics = island.metrics
         let motion = island.motion
-
-        IslandBody(corner: metrics.corner)
+        return IslandBody(corner: metrics.corner)
             .fill(.black)  // true black: on the hardware notch it disappears
             .animation(motion.corner, value: metrics.corner)
             .overlay(alignment: .top) { content }
-            .overlay(alignment: .top) { panelLayer }
             .clipShape(IslandBody(corner: metrics.corner))
             .animation(motion.corner, value: metrics.corner)
             .overlay { keyline(metrics: metrics, motion: motion) }
@@ -39,30 +74,7 @@ struct IslandView: View {
             .shadow(color: .black.opacity(0.36 * metrics.shadow), radius: 15, y: 10)
             .shadow(color: .black.opacity(0.10 * metrics.shadow), radius: 40, y: 23)
             .animation(motion.shadow, value: metrics.shadow)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .background(alignment: .top) { rehearsal }
-            .onAppear { if rehearsing { rehearsalPanel = PanelModel.rehearsal(island: island) } }
-            .foregroundStyle(.white)
-            .environment(\.colorScheme, .dark)  // controls drawn for a black surface
-            .onExitCommand { island.close() }  // Escape
-            .onChange(of: reduceMotion, initial: true) { _, on in island.reduceMotion = on || Self.forceReduceMotion }
-            .contextMenu {
-                // No Dock icon or menu bar, so right-click is the way to quit.
-                Button("Quit Mind Dump") { NSApp.terminate(nil) }
-            }
     }
-
-    /// Debug builds: `MD_REDUCE_MOTION=1` acts as if Reduce Motion were on, to check that
-    /// path without changing a system setting.
-    private static var forceReduceMotion: Bool {
-        #if DEBUG
-        ProcessInfo.processInfo.environment["MD_REDUCE_MOTION"] == "1"
-        #else
-        false
-        #endif
-    }
-
-    // MARK: Content
 
     /// One layer per presentation. Layers overlap while they cross over (the old one blurs
     /// out as the new one comes in), so the body never shows an empty black frame.
@@ -70,74 +82,112 @@ struct IslandView: View {
         let transition = IslandContentTransition(motion: island.motion)
         ZStack(alignment: .top) {
             switch island.presentation {
-            case .idle:
-                Color.clear.frame(height: 1).transition(transition)
+            case .idle, .open, .dropTarget:
+                // The bare notch, at its full size so a click anywhere on it lands.
+                Color.clear.frame(width: island.layout.notch.width, height: island.layout.notch.height)
+                    .transition(transition)
             case .peek:
                 PeekContent(island: island, monitor: monitor).transition(transition)
             case .compact(let activity):
                 CompactContent(island: island, activity: activity)
                     .id(activity.id)
                     .transition(transition)
-            case .dropTarget(let drop):
-                DropTargetContent(layout: island.layout, drop: drop).transition(transition)
-            case .panel:
-                EmptyView()  // the panel is its own layer: see `panelLayer`
             }
         }
         // Content is laid out at its final size from the first frame; the growing body
         // reveals it. Text never reflows while the shape is moving.
         .frame(width: contentWidth, alignment: .top)
         .fixedSize(horizontal: true, vertical: true)
-        // A click anywhere on a closed island opens it. As a real Button it is also
-        // reachable by keyboard and VoiceOver.
+        // A click on the notch opens the capsule, and closes it again. As a real Button
+        // it is also reachable by keyboard and VoiceOver.
         .overlay {
-            if !island.presentation.isPanel {
-                Button(action: island.open) { Color.clear.contentShape(Rectangle()) }
-                    .buttonStyle(IslandPressStyle(island: island))
-                    .accessibilityLabel("Open Mind Dump")
-                    .help("Save a note or link")
-            }
+            Button(action: island.toggle) { Color.clear.contentShape(Rectangle()) }
+                .buttonStyle(IslandPressStyle(island: island))
+                .accessibilityLabel(island.presentation.isOpen ? "Close Mind Dump" : "Open Mind Dump")
+                .help(island.presentation.isOpen ? "Close" : "Save a note or link")
         }
-    }
-
-    /// The panel is never removed, only hidden. Rebuilding it on every open cost up to
-    /// 70 ms with a long answer in it (every line laid out again), which delayed the open.
-    /// Hidden, it costs nothing; shown, it is already built.
-    ///
-    /// It is a layer of its own, not a child of the stack in `content`. A stack hands its
-    /// flexible children the size of its largest child, so with the 468-point panel in
-    /// it, the peek's + and status dot were laid out 468 points apart: outside the body,
-    /// where the clip hid them.
-    private var panelLayer: some View {
-        PanelView(island: island, panel: panel, monitor: monitor)
-            .modifier(PanelPresence(shown: island.presentation.isPanel, motion: island.motion))
-            // Its own full size from the first frame; the growing body reveals it.
-            .fixedSize(horizontal: true, vertical: true)
     }
 
     private var contentWidth: CGFloat {
         switch island.presentation {
-        case .panel: IslandLayout.panelWidth
-        case .idle: island.layout.notch.width
+        case .idle, .open, .dropTarget: island.layout.notch.width
         case .peek: island.layout.peek.width
         case .compact: island.layout.notch.width + 2 * IslandLayout.maxWing
-        case .dropTarget: island.layout.dropTarget.width
+        }
+    }
+
+    // MARK: Glass capsule
+
+    /// The capsule: one glass shape whose width, height and place each follow a spring.
+    /// What is inside it (the open box and card, or the drop target) is laid out at its
+    /// own final size, and the growing shape reveals it, as the black body does.
+    ///
+    /// The open content is never removed, only hidden. Rebuilding it on every open cost
+    /// up to 70 ms with a long answer in it (every line laid out again), which delayed
+    /// the open. Hidden, it costs nothing; shown, it is already built.
+    private var capsuleLayer: some View {
+        let capsule = island.capsule
+        let motion = island.motion
+        let drop: DropTarget? = if case .dropTarget(let target) = island.presentation { target } else { nil }
+        return GlassEffectContainer {
+            Color.clear
+                .overlay(alignment: .top) {
+                    CapsuleView(island: island, panel: panel)
+                        .modifier(CapsulePresence(shown: island.presentation.isOpen, motion: motion))
+                        .fixedSize(horizontal: true, vertical: true)
+                }
+                .overlay(alignment: .top) {
+                    ZStack {
+                        if let drop {
+                            DropTargetContent(drop: drop).transition(IslandContentTransition(motion: motion))
+                        }
+                    }
+                }
+                // The drop target's rim: says "here" in the one accent colour.
+                .overlay {
+                    CapsuleShape()
+                        .strokeBorder(CapsuleStyle.accent, lineWidth: 2)
+                        .opacity(drop == nil ? 0 : 1)
+                        .animation(drop == nil ? motion.contentOut : motion.contentIn, value: drop == nil)
+                        .allowsHitTesting(false)
+                }
+                .clipShape(CapsuleShape())
+                // On the content itself, not as a sibling: the container draws glass above
+                // anything that is not the glass's own content (the rim included).
+                .modifier(CapsuleSurface())
+                .animation(motion.edges) { $0.modifier(IslandWidth(width: capsule.width)) }
+                .animation(motion.body) { $0.modifier(IslandHeight(height: capsule.height)) }
+                .offset(y: capsule.top)
+                .animation(motion.body, value: capsule.top)
+                // Fades in at once (it starts hidden inside the notch anyway) and out only
+                // once it is back up there, so the glass stops drawing while closed.
+                .opacity(capsule.shown ? 1 : 0)
+                .animation(capsule.shown ? motion.glassIn : motion.glassOut, value: capsule.shown)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // Nothing of the glass shows above the bottom of the notch: it slides out from
+        // behind the menu bar's lower edge, where the notch is, and back in.
+        .mask(alignment: .top) {
+            VStack(spacing: 0) {
+                Color.clear.frame(height: island.layout.notch.height)
+                Color.black
+            }
         }
     }
 
     /// The first time SwiftUI builds a view it creates the text field, loads fonts and
     /// symbols and lays everything out: about 27 ms here, which is three dropped frames
-    /// at 120 Hz in the middle of the first open. The panel itself is now built at launch
-    /// and kept (see `content`). What is rehearsed here, built once out of sight and
-    /// thrown away, is everything the panel does not show yet: a pill, and Ask mode with
-    /// a finished answer in it (styled lines with references, the spinner line, the
-    /// notices, an open source row). So the first switch to Ask and the first answer
-    /// build nothing new while they animate.
+    /// at 120 Hz in the middle of the first open. The capsule's content itself is built at
+    /// launch and kept (see `capsuleLayer`). What is rehearsed here, built once out of
+    /// sight and thrown away, is everything it does not show yet: a pill, Ask mode with a
+    /// finished answer in it (styled lines with references, the spinner line, the notices,
+    /// an open source row) and the drop target. So the first switch to Ask and the first
+    /// answer build nothing new while they animate.
     @ViewBuilder private var rehearsal: some View {
         if rehearsing {
             VStack {
                 if let rehearsalPanel {
-                    PanelView(island: island, panel: rehearsalPanel, monitor: monitor, isRehearsal: true)
+                    CapsuleView(island: island, panel: rehearsalPanel, isRehearsal: true)
                 }
                 StatusLine(status: .searching("rehearsal"))
                 Notice(glyph: "circle.dashed", text: "Not found in your items.", strong: true)
@@ -149,8 +199,8 @@ struct IslandView: View {
                 )
                 ActivityGlyph(glyph: .check, tint: .white)
                 ActivityGlyph(glyph: .warning, tint: .white)
-                DropTargetContent(layout: island.layout, drop: DropTarget(isLink: true, detail: "rehearsal"))
-                DropTargetContent(layout: island.layout, drop: DropTarget(isLink: false, detail: "rehearsal", isSaving: true))
+                DropTargetContent(drop: DropTarget(isLink: true, detail: "rehearsal"))
+                DropTargetContent(drop: DropTarget(isLink: false, detail: "rehearsal", isSaving: true))
             }
             .opacity(0)
             .allowsHitTesting(false)
@@ -246,10 +296,11 @@ private struct IslandPressStyle: ButtonStyle {
     }
 }
 
-/// The panel's version of `IslandContentTransition`, for a view that stays in place:
-/// the same blur, scale and fade, driven by "shown" instead of by insertion and removal.
-/// Hidden, it takes no clicks and is invisible to VoiceOver.
-private struct PanelPresence: ViewModifier {
+/// The capsule content's version of `IslandContentTransition`, for a view that stays in
+/// place: the same blur, scale and fade, driven by "shown" instead of by insertion and
+/// removal. Hidden, it takes no clicks and is invisible to VoiceOver. (Taking the blur
+/// out was measured: no clear gain in open or close, so it stays.)
+private struct CapsulePresence: ViewModifier {
     let shown: Bool
     let motion: IslandMotion
 
@@ -308,51 +359,34 @@ private struct PeekContent: View {
 
 // MARK: - Drop target
 
-/// A drag carrying text is over the island. The wings say "drop here" and what kind of
-/// thing it is; below the notch, what a release will save. The middle of the top strip
-/// is hidden by the notch, so nothing is drawn there.
+/// A drag carrying text is over the notch: the capsule says what a release will do, next
+/// to a filled accent circle. Laid out at the target's own width, never the stack's.
 private struct DropTargetContent: View {
-    let layout: IslandLayout
     let drop: DropTarget
 
     var body: some View {
-        let width = layout.dropTarget.width
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                Image(systemName: "arrow.down.circle.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: IslandLayout.dropWing)
-                Color.clear.frame(width: layout.notch.width)
-                Text(drop.isLink ? "Link" : "Note")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .frame(width: IslandLayout.dropWing)
-            }
-            .frame(height: layout.notch.height)
-
-            VStack(spacing: 3) {
-                Text(headline)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .contentTransition(.opacity)
-                Text(drop.detail)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.5))
-                    .truncationMode(drop.isLink ? .middle : .tail)
-            }
-            .lineLimit(1)
-            .padding(.horizontal, 18)
-            .padding(.top, 6)
-            .frame(width: width, alignment: .top)
+        HStack(spacing: 12) {
+            Image(systemName: "plus")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 38, height: 38)
+                .background(Circle().fill(CapsuleStyle.accent))
+            Text(headline)
+                .font(.system(size: 15, weight: .semibold))
+                .lineLimit(1)
+                .contentTransition(.opacity)
+            Spacer(minLength: 0)
         }
-        // Laid out at the target's own width, never the stack's.
-        .frame(width: width, alignment: .top)
+        .padding(.leading, 8)
+        .padding(.trailing, 20)
+        .frame(width: IslandLayout.dropWidth, height: IslandLayout.capsuleHeight)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(headline): \(drop.detail)")
     }
 
     private var headline: String {
         if drop.isSaving { return "Saving…" }
-        return drop.isLink ? "Let go to save this link" : "Let go to save this note"
+        return drop.isLink ? "Release to save link" : "Release to save note"
     }
 }
 

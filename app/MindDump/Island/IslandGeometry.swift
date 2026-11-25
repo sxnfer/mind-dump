@@ -12,10 +12,24 @@ struct IslandMetrics: Equatable {
     var corner: CGFloat
     /// Radius of the concave top curves. 0 at rest: the hardware notch has its own.
     var shoulder: CGFloat
-    /// 0...1. The drop shadow under the body; only a panel casts one.
+    /// 0...1. The drop shadow under the body.
     var shadow: Double
     /// 0...1. A faint outline that separates black from a dark window behind it.
     var keyline: Double
+}
+
+/// The glass capsule under the notch: the box, the answer card and the drop target.
+///
+/// It is a second shape, apart from the black body, because the notch is black hardware:
+/// glass that touched it would have nothing to bend there. `top` is the distance from the
+/// screen's top edge to the capsule's top. Closed, the capsule is tucked up inside the
+/// notch, where the black body hides it; it comes out of the notch and goes back into it.
+struct CapsuleMetrics: Equatable {
+    var width: CGFloat
+    var height: CGFloat
+    var top: CGFloat
+    /// False once it is tucked away: the glass stops drawing.
+    var shown: Bool
 }
 
 /// Turns "which presentation" into sizes, from the one thing measured on the Mac: the notch.
@@ -27,15 +41,24 @@ struct IslandLayout: Equatable {
 
     static let fallback = IslandLayout(notch: CGSize(width: 180, height: 32), hasNotch: false)
 
-    /// Panel width. Wide enough for a sentence, narrow enough to stay "at the notch".
-    static let panelWidth: CGFloat = 468
-    /// Space inside the panel, from its edge to its content.
-    static let panelPadding: CGFloat = 18
+    /// The capsule: wide enough for a sentence, narrow enough to stay "at the notch".
+    static let capsuleWidth: CGFloat = 440
+    /// One line: the round buttons (38) with 8 points around them.
+    static let capsuleHeight: CGFloat = 54
+    /// Space between the bottom of the notch and the top of the capsule.
+    static let capsuleGap: CGFloat = 12
+    /// Corners of the card. A one-line capsule is fully round (half its height, 27).
+    static let capsuleCorner: CGFloat = 27
+    /// The tallest the answer card grows before its answer scrolls inside.
+    static let maxCardHeight: CGFloat = 400
+    /// The drop target is narrower: it holds one short line.
+    static let dropWidth: CGFloat = 300
     /// The widest a pill's wing may grow on either side of the notch.
     static let maxWing: CGFloat = 132
-    /// The largest body the window must hold, plus room for the shadow.
-    static let maxPanelHeight: CGFloat = 420
-    static let shadowRoom: CGFloat = 96
+
+    /// The see-through window everything is drawn in: room for the widest pill, the
+    /// tallest card and their shadows.
+    static let windowSize = CGSize(width: 700, height: 520)
 
     /// The bare notch: invisible, because black sits on the black hardware cutout. It is
     /// drawn slightly smaller than the cutout, so a sub-pixel mismatch can never show as
@@ -67,25 +90,28 @@ struct IslandLayout: Equatable {
         )
     }
 
-    /// A drag carrying text is over the island: it opens out, wider than a peek and deep
-    /// enough for two lines below the notch (what a release will save).
-    var dropTarget: IslandMetrics {
-        IslandMetrics(
-            width: notch.width + 2 * Self.dropWing, height: notch.height + Self.dropDepth,
-            corner: 24, shoulder: 8, shadow: 0.6, keyline: 1
+    /// Where the capsule's top sits: just under the notch, apart from it.
+    var capsuleTop: CGFloat { notch.height + Self.capsuleGap }
+
+    /// The open capsule. `content` is the measured height of what is inside it: one line
+    /// for Capture, more for an error or an answer card.
+    func capsule(content: CGFloat) -> CapsuleMetrics {
+        CapsuleMetrics(
+            width: Self.capsuleWidth, height: min(max(content, Self.capsuleHeight), Self.maxCardHeight),
+            top: capsuleTop, shown: true
         )
     }
 
-    static let dropWing: CGFloat = 64
-    static let dropDepth: CGFloat = 52
+    /// A drag carrying text is over the notch: the capsule comes out as the target.
+    var dropCapsule: CapsuleMetrics {
+        CapsuleMetrics(width: Self.dropWidth, height: Self.capsuleHeight, top: capsuleTop, shown: true)
+    }
 
-    /// The open panel. `content` is the height of what sits below the notch band.
-    func panel(content: CGFloat) -> IslandMetrics {
-        let height = min(notch.height + content, Self.maxPanelHeight)
-        return IslandMetrics(
-            width: Self.panelWidth, height: height,
-            corner: 30, shoulder: 10, shadow: 1, keyline: 1
-        )
+    /// Closed: a small capsule up inside the notch, behind the black body. Opening springs
+    /// it down and out from there, closing pulls it back in, so it reads as coming out of
+    /// the notch rather than as a window popping up.
+    var tucked: CapsuleMetrics {
+        CapsuleMetrics(width: max(notch.width - 60, 80), height: 26, top: max(notch.height - 30, 0), shown: false)
     }
 
     /// Width of the band beside the notch inside a body of this width. Content placed
@@ -151,5 +177,23 @@ struct IslandShoulder: Shape {
         }
         path.closeSubpath()
         return path
+    }
+}
+
+/// The capsule's outline: fully round while it is one line, a card with 27-point corners
+/// once it is taller. The corner comes from the height in every frame, so a capsule that
+/// grows into a card never shows a corner that does not fit its size.
+struct CapsuleShape: InsettableShape {
+    /// Pulls the outline in, for a stroke drawn inside the edge (the drop target's rim).
+    var inset: CGFloat = 0
+
+    func inset(by amount: CGFloat) -> CapsuleShape {
+        CapsuleShape(inset: inset + amount)
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let rect = rect.insetBy(dx: inset, dy: inset)
+        let radius = max(min(IslandLayout.capsuleCorner - inset, rect.height / 2, rect.width / 2), 0)
+        return RoundedRectangle(cornerRadius: radius, style: .continuous).path(in: rect)
     }
 }
