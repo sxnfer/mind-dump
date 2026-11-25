@@ -4,7 +4,7 @@
 
 An open-source "second brain" for macOS. Drop links, files, images and notes on a black panel at the notch. A local backend saves them at once, processes them in the background, and answers questions with citations. Each person runs their own copy on their own Mac, with their own AI model key.
 
-> Status: Milestone 3. Press + on the panel to save the link on your clipboard, or a note; upload PDFs and images through the API. A worker reads, chunks and (with your key) embeds each item in the background. Search arrives in Milestone 4.
+> Status: Milestone 4. Press + on the panel to save the link on your clipboard, or a note; upload PDFs and images through the API. A worker reads, chunks and (with your key) embeds each item in the background. Search finds passages by exact words, by meaning, or both, with filters; an eval measures how well.
 
 ## Run it
 
@@ -46,13 +46,45 @@ curl -s localhost:8000/items/1/text            # the file's text, with its pages
 curl -s localhost:8000/items/1/chunks          # passages with page numbers, and whether each has a vector
 ```
 
+### Search
+
+`GET /search` finds passages (chunks), not just items (D37). Each hit carries its item, its place in the text (`start_char`, `end_char`, and `page` for PDFs) and how it was found: its rank in the keyword list, its rank in the vector list, and the merged score.
+
+```bash
+curl -s "localhost:8000/search?q=buffer+pool"                          # hybrid: words and meaning, merged
+curl -s "localhost:8000/search?q=%22buffer+pool%22+-fire&mode=keyword" # exact phrase, without "fire"
+curl -s "localhost:8000/search?q=woodland+catches+fire&mode=vector"    # by meaning (needs VOYAGE_API_KEY)
+curl -s "localhost:8000/search?q=registry&type=link&from=2026-11-01&to=2026-11-30&tag=carbon&limit=5"
+curl -s "localhost:8000/search?q=leakage&item_id=7"                    # one item's passages
+curl -s -X PUT localhost:8000/items/7/tags -H 'content-type: application/json' \
+  -d '{"tags": ["Carbon Markets", "MRV"]}'                              # replace the tags ([] clears)
+```
+
+- `mode`: `hybrid` (default), `keyword` or `vector`. The response's `mode` says what really ran.
+- Keyword syntax is `websearch_to_tsquery`: every word must appear (stemmed, so "retries" finds "retry"); `"quotes"` for a phrase, `-word` to exclude, `or` for either.
+- Filters: `type` (note, link, file), `from` and `to` (a date means the whole day, UTC, or a full time), `tag`, `item_id`. They narrow both lists before ranking, so a filter never hides a match.
+- Without `VOYAGE_API_KEY`, or when Voyage is failing, hybrid returns keyword results with `"degraded": true` and a `notice`; `mode=vector` answers 503 with the reason.
+- Tags are normalised one way: trimmed, inner spaces squeezed to one, lowercased. So `?tag=carbon markets` finds an item tagged `Carbon  Markets`.
+
+### Measure search
+
+The eval loads 12 original documents (`backend/eval/corpus/`) through the real pipeline into its own database (`mind_dump_eval`, created if missing; it refuses any database not named `*_eval` or `*_test`), asks 20 golden questions (`backend/eval/golden.json`), and prints recall@5 and MRR@10 per mode, with every miss. It writes `docs/results.md`. Run it from a checkout, with the Compose database up:
+
+```bash
+cd backend
+uv run python -m mind_dump.eval                 # keyword only without a key; all three modes with one
+uv run python -m mind_dump.eval --no-results    # print only
+```
+
+It reads `VOYAGE_API_KEY` from the environment or from `.env`; with a key, the 30 chunks and 20 questions are embedded (a few thousand tokens). CI runs it in keyword mode and fails if keyword recall@5 drops below its floor.
+
 ### AI model keys (optional)
 
 Each owner uses their own keys (D8). Both are optional:
 
 | Key | Get it at | Without it |
 | --- | --- | --- |
-| `VOYAGE_API_KEY` | dashboard.voyageai.com | Everything is saved, read and chunked; chunks have no vectors, so no search by meaning yet. |
+| `VOYAGE_API_KEY` | dashboard.voyageai.com | Everything is saved, read and chunked; chunks have no vectors, so search finds exact words only (hybrid falls back to keyword results). |
 | `ANTHROPIC_API_KEY` | platform.claude.com | Images end in `error` (there is nothing to read without a description); notes, links and PDFs work. |
 
 Put them in `.env`, then:
@@ -86,11 +118,12 @@ uv run ruff check . && uv run ruff format .   # lint and format
 
 | Path | What lives there |
 | --- | --- |
-| `backend/` | API (FastAPI) and, from M3, workers. `Dockerfile`, tests. |
+| `backend/` | API (FastAPI) and, from M3, workers. `Dockerfile`, tests. `eval/`: the search eval's corpus and golden questions (M4). |
 | `app/` | Native macOS app (SwiftUI in an `NSPanel`). |
 | `.github/workflows/` | CI: lint, test, image build and smoke test; Xcode build. |
 | `docs/plan/` | The plan and milestones. |
 | `docs/decisions/` | One record per approved decision, with the reasons. |
+| `docs/results.md` | The latest search eval numbers (M4). |
 
 ## Licence
 
