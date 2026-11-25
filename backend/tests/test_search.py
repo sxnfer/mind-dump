@@ -28,6 +28,7 @@ from mind_dump.search import (
     VECTOR_EXACT_SQL,
     Filters,
     SearchUnavailable,
+    is_strict,
     keyword_params,
     rrf,
     search,
@@ -176,6 +177,76 @@ def test_stop_words_or_punctuation_only_give_an_empty_list(
     response = client.get("/search", params={"q": query, "mode": "keyword"})
     assert response.status_code == 200, response.text
     assert response.json()["hits"] == []
+
+
+# A typed sentence (D37's two tiers). Each of these fails with plain websearch_to_tsquery,
+# which needs every word of the query in one chunk.
+
+
+def test_a_typed_question_finds_a_passage_missing_one_of_its_words(conn: Conn) -> None:
+    item = add_item(conn)
+    add_chunk(conn, item, "Seedlings were planted at the start of the rainy season.")
+    target = add_chunk(conn, item, "Of 18,450 tonnes, 2,770 went to the buffer pool.")
+    # "many" (lexeme 'mani') and "credits" are in no chunk: all-words finds nothing.
+    assert ids(search(conn, "How many credits went to the buffer pool?", "keyword"))[0] == target
+    # "goes" (lexeme 'goe') is the only word the passage lacks.
+    share = add_chunk(conn, item, "A share of the credits, ten to twenty percent, enters the pool.")
+    assert ids(search(conn, "What share of credits goes into the pool?", "keyword"))[0] == share
+
+
+def test_chunks_with_all_the_words_rank_above_chunks_with_some(conn: Conn) -> None:
+    item = add_item(conn)
+    # Two of the three words, many times: the higher ts_rank...
+    some = add_chunk(conn, item, "Buffer pool. " * 8)
+    # ...but this one has all three, once each.
+    every = add_chunk(conn, item, "The share each project puts in the buffer pool.")
+    add_chunk(conn, item, "Nothing in common with the query.")
+    hits = search(conn, "buffer pool share", "keyword").hits
+    assert [h.chunk_id for h in hits] == [every, some]
+    assert hits[0].keyword_score < hits[1].keyword_score  # the tier decided, not the score
+
+
+def test_quotes_or_a_minus_term_turn_the_any_word_tier_off(conn: Conn) -> None:
+    item = add_item(conn)
+    chunk = add_chunk(conn, item, "The buffer pool holds credits against fire.")
+    # Plain words: "mangrove" is missing, but the other words still find the chunk.
+    assert ids(search(conn, "mangrove buffer pool", "keyword")) == [chunk]
+    # Quotes or a -word: exact, as written. No chunk has "mangrove", so nothing.
+    assert ids(search(conn, '"buffer pool" mangrove', "keyword")) == []
+    assert ids(search(conn, "mangrove buffer -drought", "keyword")) == []
+    assert ids(search(conn, "buffer pool -fire", "keyword")) == []
+
+
+@pytest.mark.parametrize(
+    ("query", "strict"),
+    [
+        ("buffer pool", False),
+        ("project MD-2291 credits", False),  # a hyphen inside a word is not a minus
+        ("forest or buyers", False),
+        ('"buffer pool"', True),
+        ("buffer -fire", True),
+        ("-fire buffer", True),
+    ],
+)
+def test_which_queries_are_strict(query: str, strict: bool) -> None:
+    assert is_strict(query) is strict
+
+
+@pytest.mark.parametrize("mode", ["keyword", "hybrid"])
+def test_filters_apply_to_both_keyword_tiers(conn: Conn, mode: str) -> None:
+    all_note = add_item(conn, "note")
+    all_link = add_item(conn, "link")
+    some_note = add_item(conn, "note")
+    some_link = add_item(conn, "link")
+    add_chunk(conn, all_note, "Crediting periods can be renewed twice.", vector=None)
+    add_chunk(conn, all_link, "Crediting periods can be renewed twice, they said.", vector=None)
+    add_chunk(conn, some_note, "Renewal is not automatic.", vector=None)
+    add_chunk(conn, some_link, "A renewed baseline.", vector=None)
+    result = search(
+        conn, "How many times are crediting periods renewed?", mode, Filters(type="note"),
+        embedder=FakeEmbedder(),
+    )  # fmt: skip
+    assert [h.item_id for h in result.hits if h.keyword_rank] == [all_note, some_note]
 
 
 # ---------- C2: vector ----------
@@ -622,6 +693,13 @@ def test_the_keyword_query_uses_the_gin_index(conn: Conn, many_chunks: None) -> 
     # Pinned: with seq scans off, the planner reports an index only if it CAN use one.
     conn.execute("SET enable_seqscan = off")
     text = plan(conn, KEYWORD_SQL, keyword_params("word7", Filters(), 50))
+    assert "chunks_text_tsv_idx" in text, text
+
+
+@pytest.mark.parametrize("query", ["word7 word8 nowhere", '"word7 word8"', "word7 -word8"])
+def test_both_keyword_tiers_use_the_gin_index(conn: Conn, many_chunks: None, query: str) -> None:
+    conn.execute("SET enable_seqscan = off")
+    text = plan(conn, KEYWORD_SQL, keyword_params(query, Filters(type="note"), 50))
     assert "chunks_text_tsv_idx" in text, text
 
 

@@ -163,7 +163,7 @@ class SearchHit(BaseModel):
     # How it was found. score is the RRF sum: 1 / (60 + rank) for each list it is in.
     score: float
     keyword_rank: int | None  # 1 is best; None: not in the keyword list
-    keyword_score: float | None  # ts_rank_cd, higher is better
+    keyword_score: float | None  # ts_rank, higher is better (all-words chunks come first)
     vector_rank: int | None  # 1 is best; None: not in the vector list
     vector_distance: float | None  # cosine distance, 0 to 2, lower is closer
 

@@ -69,13 +69,13 @@ jobs:
       # M4: the search eval. It loads the committed corpus (backend/eval/) through the
       # real pipeline into its own database, asks the 20 golden questions, and prints
       # recall@5 and MRR. CI has no model keys, so only keyword search is measured.
-      # The floor: keyword recall@5 was 0.40 (8 of 20, docs/results.md); 0.35 allows one
+      # The floor: keyword recall@5 was 0.80 (16 of 20, docs/results.md); 0.75 allows one
       # question to slip, and two fail the build. To change it, run the eval locally,
       # commit the new docs/results.md, and set the floor one question (0.05) below it.
       - name: Search eval (keyword recall@5 floor)
         env:
           EVAL_DATABASE_URL: postgresql://mind_dump:ci-only-password@localhost:5432/mind_dump_eval
-        run: uv run python -m mind_dump.eval --modes keyword --no-results --min-keyword-recall 0.35
+        run: uv run python -m mind_dump.eval --modes keyword --no-results --min-keyword-recall 0.75
 
       # Buildx + the GitHub Actions cache keep Docker layers between runs.
       - uses: docker/setup-buildx-action@v3

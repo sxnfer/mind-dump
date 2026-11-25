@@ -85,6 +85,9 @@ class Question:
 class Answer:
     question: Question
     rank: int | None  # 1-based rank of the first right chunk in the top DEPTH; None: miss
+    # The first rank of ANY chunk of the right document: on a miss, it tells "found the
+    # document, but another passage of it" apart from "never found the document".
+    doc_rank: int | None = None
 
 
 @dataclass
@@ -216,10 +219,14 @@ def ask(
     result = search_mod.search(conn, q.question, mode, limit=DEPTH, embedder=embedder)
     if result.mode != mode:  # never score a fallback as if it were the mode asked for
         raise RuntimeError(f"{mode} search fell back to {result.mode}: {result.notice}")
+    doc_rank = None
     for rank, hit in enumerate(result.hits, 1):
-        if hit.item_id == item_id and q.passage in hit.text:
-            return Answer(q, rank)
-    return Answer(q, None)
+        if hit.item_id != item_id:
+            continue
+        doc_rank = doc_rank or rank
+        if q.passage in hit.text:
+            return Answer(q, rank, doc_rank)
+    return Answer(q, None, doc_rank)
 
 
 def run_eval(
@@ -260,7 +267,11 @@ def run_eval(
 def _rank(answer: Answer | None) -> str:
     if answer is None:
         return "-"
-    return "miss" if answer.rank is None else str(answer.rank)
+    if answer.rank is not None:
+        return str(answer.rank)
+    if answer.doc_rank is not None:
+        return f"miss (other chunk at {answer.doc_rank})"
+    return "miss"
 
 
 def format_report(report: Report) -> str:
@@ -283,8 +294,7 @@ def format_report(report: Report) -> str:
         lines.append(f"{m.mode}: {len(misses)} not in the top {TOP_K}")
         for a in misses:
             lines.append(
-                f"  Q{a.question.id:<2} {a.question.kind:<10} rank {_rank(a):<4} "
-                f"{a.question.question}"
+                f"  Q{a.question.id:<2} {a.question.kind:<10} {_rank(a):<24} {a.question.question}"
             )
     return "\n".join(lines)
 
@@ -358,8 +368,9 @@ def results_markdown(report: Report, commit: str, when: datetime) -> str:
     lines += [
         "## Rank of the right passage, per question",
         "",
-        f"A number is the rank of the first right chunk (top {DEPTH}); miss means not in the "
-        f"top {DEPTH}.",
+        f"A number is the rank of the first right chunk (top {DEPTH}). miss: not in the top "
+        f"{DEPTH}; miss (other chunk at r): the right document came back at rank r, but "
+        "with a chunk that doesn't hold the passage.",
         "",
         header,
         "| --- | --- | --- | " + " | ".join("---" for _ in report.modes) + " |",

@@ -106,11 +106,19 @@ def test_the_command_prints_numbers_and_enforces_the_floor(
 def test_results_markdown_with_every_mode() -> None:
     q = harness.Question(1, "words", "What?", "doc", "passage")
     report = harness.Report(documents=1, chunks=2, questions=1, embedding_model="voyage-4")
-    for mode, rank in (("keyword", None), ("vector", 2), ("hybrid", 1)):
-        report.modes.append(harness.ModeResult(mode, [harness.Answer(q, rank)]))
+    for mode, rank, doc_rank in (("keyword", None, 3), ("vector", 2, 1), ("hybrid", 1, 1)):
+        report.modes.append(harness.ModeResult(mode, [harness.Answer(q, rank, doc_rank)]))
     text = harness.results_markdown(report, "abc1234", datetime(2026, 11, 25, tzinfo=UTC))
     assert "| keyword | 0.00 | 0.00 | 0/1 |" in text
     assert "| vector | 1.00 | 0.50 | 1/1 |" in text
     assert "| hybrid | 1.00 | 1.00 | 1/1 |" in text
     assert "pending" not in text
-    assert "| 1 | words | What? | miss | 2 | 1 |" in text
+    assert "| 1 | words | What? | miss (other chunk at 3) | 2 | 1 |" in text
+
+
+def test_a_miss_says_whether_the_document_came_back(database_url: str) -> None:
+    doc = harness.Document("d", "D", ("Mangrove survival rose. " * 40) + "\n\n" + ("Other. " * 140))
+    found = harness.Question(1, "words", "mangrove survival", "d", "Other. Other.")
+    report = harness.run_eval(database_url, ["keyword"], docs=[doc], questions=[found])
+    answer = report.mode("keyword").answers[0]
+    assert (answer.rank, answer.doc_rank) == (None, 1)

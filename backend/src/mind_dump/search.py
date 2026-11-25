@@ -3,9 +3,11 @@
 Two lists, one merge:
 
     keyword_search   Postgres full-text search. The chunk's stored `text_tsv` (stemmed
-                     'english' words, migration 010) is matched with
-                     websearch_to_tsquery (quotes for a phrase, - to exclude a word,
-                     "or" for either) and ranked with ts_rank_cd. GIN index.
+                     'english' words, migration 010) is matched against the query parsed
+                     by websearch_to_tsquery: chunks with all the words first, then
+                     chunks with any of them, each tier ranked by ts_rank. Quotes (a
+                     phrase) or a -word (exclude) switch to exact matching: all words
+                     only. GIN index.
     vector_search    pgvector: the cosine distance (<=>) between the query's vector and
                      each chunk's. HNSW index when there is no filter; an exact scan of
                      the filtered rows when there is one (see vector_search).
@@ -25,6 +27,7 @@ Plain SQL with parameters, as in items.py. The filter clause is a constant joine
 the statements, never a value.
 """
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -84,19 +87,37 @@ _FILTERS = """
         WHERE it.item_id = c.item_id AND t.name = %(tag)s::text))
 """
 
-# Words. The filter sits in the same WHERE as the match, so ranking and LIMIT only ever
-# see rows that pass it. Ties (same ts_rank_cd) go to the older chunk, so the order is
-# the same on every run. A query of only stop words or punctuation parses to an empty
-# tsquery, which matches nothing: an empty list, not an error.
+# Words, in two tiers (D37). People type sentences, and one word missing from the passage
+# ("how MANY credits...") must not empty the list, so:
+#   1. chunks with ALL the query's words come first (websearch_to_tsquery as written);
+#   2. then chunks with ANY of them: the same tsquery with every AND (' & ') turned into
+#      OR (' | '). Only ' & ' with its spaces is replaced: a lexeme from a URL can hold a
+#      bare '&'. Phrases ('a' <-> 'b') and NOT (!'c') are left as they are.
+# Within a tier, ts_rank (word frequency) orders; not ts_rank_cd, whose cover density
+# rewards query words standing next to each other, which an any-word match rarely has.
+# A query with quotes or a -word is strict (decided in Python, is_strict): tier 1 only,
+# exactly websearch_to_tsquery. The filter sits in the same WHERE as the match, so ranking
+# and LIMIT only see rows that pass it; ties go to the older chunk, so the order is the
+# same every run. A query of only stop words or punctuation parses to an empty tsquery,
+# which matches nothing: an empty list, not an error. (Postgres sends a NOTICE for it;
+# psycopg drops notices when no handler is registered, so nothing reaches the logs.)
+# Everything stays one inline expression per use, so the planner can use the GIN index.
 KEYWORD_SQL = (
     """
-SELECT c.id, ts_rank_cd(c.text_tsv, websearch_to_tsquery('english', %(q)s)) AS score
+SELECT c.id,
+       ts_rank(c.text_tsv,
+               replace(websearch_to_tsquery('english', %(q)s)::text, ' & ', ' | ')::tsquery)
+           AS score
 FROM chunks c JOIN items i ON i.id = c.item_id
-WHERE c.text_tsv @@ websearch_to_tsquery('english', %(q)s)
+WHERE c.text_tsv @@ (CASE WHEN %(strict)s::boolean
+                          THEN websearch_to_tsquery('english', %(q)s)
+                          ELSE replace(websearch_to_tsquery('english', %(q)s)::text,
+                                       ' & ', ' | ')::tsquery
+                     END)
 """
     + _FILTERS
     + """
-ORDER BY score DESC, c.id
+ORDER BY (c.text_tsv @@ websearch_to_tsquery('english', %(q)s)) DESC, score DESC, c.id
 LIMIT %(n)s
 """
 )
@@ -141,16 +162,26 @@ WHERE c.id = ANY(%s)
 
 @dataclass(frozen=True)
 class Ranked:
-    """One entry of one list: rank 1 is the best. score is ts_rank_cd (keyword, higher is
-    better) or the cosine distance (vector, lower is better), kept to explain a result."""
+    """One entry of one list: rank 1 is the best. score is ts_rank (keyword, higher is
+    better within a tier) or the cosine distance (vector, lower is better), kept to
+    explain a result."""
 
     chunk_id: int
     rank: int
     score: float
 
 
+# A double quote, or a word with a leading minus ("-fire", not "MD-2291"): the owner
+# asked for exact matching, so the any-word tier is off.
+_STRICT = re.compile(r'"|(?:^|\s)-\S')
+
+
+def is_strict(query: str) -> bool:
+    return _STRICT.search(query) is not None
+
+
 def keyword_params(query: str, filters: Filters, n: int) -> dict:
-    return {"q": query, "n": n, **filters.params()}
+    return {"q": query, "strict": is_strict(query), "n": n, **filters.params()}
 
 
 def vector_params(vector: Vector, model: str, filters: Filters, n: int) -> dict:
@@ -236,7 +267,7 @@ class Hit:
     item_created_at: datetime
     score: float  # the RRF score over the lists this search used
     keyword_rank: int | None = None
-    keyword_score: float | None = None  # ts_rank_cd
+    keyword_score: float | None = None  # ts_rank against the any-word query
     vector_rank: int | None = None
     vector_distance: float | None = None  # cosine distance: 0 is the same direction
 
