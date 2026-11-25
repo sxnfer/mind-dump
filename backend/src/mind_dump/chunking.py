@@ -10,6 +10,8 @@ The rules:
 4. A sentence longer than LIMIT is cut at LIMIT.
 5. No overlap. Each chunk is the exact slice text[start:end], blank lines included, so a
    citation can point at the place, and the same text always gives the same chunks (D30).
+6. A PDF's pages are chunked one by one (chunk_pages): a chunk never crosses a page, so
+   each one has a single page number for its citation (D7b).
 
 A pure function: no database, no clock, no randomness.
 """
@@ -34,6 +36,7 @@ class Chunk:
     start_char: int
     end_char: int
     text: str
+    page: int | None = None  # PDFs: 1-based page number. Notes, links, images: None
 
 
 def _paragraphs(text: str) -> list[Span]:
@@ -108,3 +111,15 @@ def chunk_text(text: str, limit: int = LIMIT) -> list[Chunk]:
         spans += _pack(sentences, limit)
     spans += _pack(short, limit)
     return [Chunk(i, s, e, text[s:e]) for i, (s, e) in enumerate(spans)]
+
+
+def chunk_pages(text: str, pages: list[Span], limit: int = LIMIT) -> list[Chunk]:
+    """Rule 6: chunk each page on its own. `pages` holds (start, end) of page 1, 2, ...
+    in `text`. Positions stay positions in the whole text, and indexes run on across
+    pages, so the result looks like chunk_text's, with a page number on each chunk."""
+    chunks: list[Chunk] = []
+    for number, (start, end) in enumerate(pages, start=1):
+        for c in chunk_text(text[start:end], limit):
+            s, e = start + c.start_char, start + c.end_char
+            chunks.append(Chunk(len(chunks), s, e, text[s:e], page=number))
+    return chunks

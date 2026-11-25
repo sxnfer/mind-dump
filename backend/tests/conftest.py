@@ -59,6 +59,15 @@ def _ensure_test_database(url: str) -> None:
             admin.execute(f'CREATE DATABASE "{_TEST_DB}"')  # noqa: S608 (constant name)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def no_model_keys() -> None:
+    """Tests never call a model API (D8): drop any real keys from this process, so the
+    app, the commands and any worker subprocess see none. Tests that need a "configured"
+    key set a dummy one with monkeypatch, and use fakes or mock transports."""
+    for name in ("VOYAGE_API_KEY", "ANTHROPIC_API_KEY", "EMBEDDING_MODEL", "LLM_MODEL"):
+        os.environ.pop(name, None)
+
+
 @pytest.fixture(scope="session")
 def database_url() -> str:
     url = os.environ.get("TEST_DATABASE_URL") or _default_database_url()
@@ -84,7 +93,7 @@ def clean_tables(database_url: str, storage_dir: Path) -> None:
     """Every test starts with empty tables, ids from 1 and no landed files."""
     with psycopg.connect(database_url, autocommit=True) as conn:
         conn.execute(
-            "TRUNCATE items, tags, item_tags, fetches, item_versions, jobs, chunks"
+            "TRUNCATE items, tags, item_tags, fetches, item_versions, jobs, chunks, file_texts"
             " RESTART IDENTITY CASCADE"
         )
     shutil.rmtree(storage_dir)

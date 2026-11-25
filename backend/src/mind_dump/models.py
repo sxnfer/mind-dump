@@ -40,7 +40,7 @@ NewItem = Annotated[NewNote | NewLink, Field(discriminator="type")]
 #   retrying    a try failed for a reason that may pass (D35); `error` says which
 #   ready       chunked: its text is ready for search
 #   error       gave up (dead); `error` says why. POST /items/{id}/process tries again
-#   saved       no job: files, until PDF text arrives in stage 2
+#   saved       no job (since M3 every item gets one on save; files included)
 ProcessingStatus = Literal["saved", "queued", "processing", "retrying", "ready", "error"]
 
 
@@ -86,7 +86,7 @@ class Job(BaseModel):
 
     id: int
     item_id: int
-    kind: Literal["process", "rebuild"]
+    kind: Literal["process", "rebuild", "embed"]
     status: Literal["queued", "running", "failed", "done", "dead"]
     attempts: int
     run_after: datetime
@@ -100,3 +100,27 @@ class Chunk(BaseModel):
     start_char: int
     end_char: int
     text: str
+    page: int | None = None  # PDFs: the 1-based page it sits on (chunks never cross pages)
+    embedded: bool = False  # has a vector (D8); False while no VOYAGE_API_KEY is set
+    embedding_model: str | None = None  # which model made the vector
+
+
+class Page(BaseModel):
+    number: int  # 1-based
+    start_char: int  # page n is text[start_char:end_char]
+    end_char: int
+
+
+class FileText(BaseModel):
+    """A file's extracted text (D7b), the text its chunks point into. Derived data: a
+    re-run with from_raw=true rebuilds it from the stored file."""
+
+    item_id: int
+    # pages: a PDF's own text, page by page. description: an image described by a model,
+    # in the model's words, not the source's.
+    kind: Literal["pages", "description"]
+    text: str
+    text_sha256: str
+    extractor: str  # "pypdf 7.1.1", or "<model> (image description)"
+    pages: list[Page] | None  # PDFs only
+    created_at: datetime

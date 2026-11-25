@@ -6,6 +6,15 @@ name: mind-dump
 x-database-url: &database-url
   DATABASE_URL: postgresql://mind_dump:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}@db:5432/mind_dump
 
+# D8: the owner's model keys and model names. All optional (`:-` allows empty): with no
+# VOYAGE_API_KEY chunks are saved without vectors; with no ANTHROPIC_API_KEY images can't
+# be described. Empty model names mean the defaults (voyage-4, claude-opus-5-5).
+x-models: &models
+  VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+  LLM_MODEL: ${LLM_MODEL:-}
+
 services:
   db:
     image: pgvector/pgvector:pg18  # D3: Postgres 18 with the pgvector extension available
@@ -43,7 +52,7 @@ services:
     build: ./backend
     image: mind-dump-api:local
     environment:
-      <<: *database-url
+      <<: [*database-url, *models]
     volumes:
       - rawdata:/data  # D5: landed pages live outside the container
     ports:
@@ -54,14 +63,15 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
-  # D6: claims jobs from the jobs table, fetches links, chunks text. Same image as the api.
+  # D6: claims jobs from the jobs table, fetches links, reads files (D7b), chunks text and
+  # embeds it (D8). Same image as the api.
   # Several copies are safe (FOR UPDATE SKIP LOCKED):  docker compose up --scale worker=2
   worker:
     build: ./backend
     image: mind-dump-api:local
     command: ["python", "-m", "mind_dump.worker"]
     environment:
-      <<: *database-url
+      <<: [*database-url, *models]
     volumes:
       - rawdata:/data  # the same landed pages as the api (D5, D28)
     healthcheck:

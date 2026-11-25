@@ -1,5 +1,6 @@
 """Save, list, get and delete items (M1), read a link's page history (P1, D32),
-upload files (P2, D34), and follow each item's processing (P3, D6).
+upload files (P2, D34), follow each item's processing (P3, D6), and read a file's
+extracted text (M3, D7b).
 
 Plain SQL with server-side parameters. Queries are string literals, never f-strings,
 so no value can ever become part of the SQL text (ruff rule S608 enforces this).
@@ -18,7 +19,18 @@ from starlette.concurrency import run_in_threadpool
 
 from mind_dump import jobs, pages
 from mind_dump.db import get_conn
-from mind_dump.models import Chunk, Item, ItemDetail, ItemPage, Job, NewItem, NewLink, Version
+from mind_dump.models import (
+    Chunk,
+    FileText,
+    Item,
+    ItemDetail,
+    ItemPage,
+    Job,
+    NewItem,
+    NewLink,
+    Page,
+    Version,
+)
 from mind_dump.storage import Storage
 from mind_dump.uploads import (
     ALLOWED_MEDIA_TYPES,
@@ -47,7 +59,7 @@ def _not_found(item_id: int) -> HTTPException:
 
 # An item's processing state is its latest job's status, in words the app can show (D6).
 _STATE = {
-    None: "saved",  # no job: files, until stage 2
+    None: "saved",  # no job (every item gets one since M3; kept so a gap can't crash)
     "queued": "queued",
     "running": "processing",
     "failed": "retrying",
@@ -143,7 +155,8 @@ def _save_file(
     media_type: str,
     filename: str | None,
 ) -> dict:
-    """Store the bytes, then insert the row. Returns the new row, or raises 409."""
+    """Store the bytes, then insert the row and its job. Returns the new row (with the
+    job's status), or raises 409."""
     # File first, row second: no row can ever point at a missing file.
     # A duplicate also writes nothing new: same bytes, same hash, same key, and put() is
     # write-once (the same bytes again is a no-op). So when the INSERT below fails with
@@ -161,6 +174,11 @@ def _save_file(
                     """,
                     (filename, sha256, media_type, len(data), filename),
                 ).fetchone()
+                if row is None:  # cannot happen: INSERT ... RETURNING always returns the row
+                    raise RuntimeError("INSERT returned no row")
+                # Same transaction as the item, like notes and links (D6): the worker
+                # extracts the text later (D7b).
+                job = jobs.enqueue(conn, row["id"])
         except psycopg.errors.UniqueViolation:
             # The unique index (migration 006) caught the same bytes uploaded before.
             existing = conn.execute(
@@ -172,9 +190,7 @@ def _save_file(
                 detail="This file is already saved",
                 headers={"Location": f"/items/{existing_id}"} if existing_id else None,
             ) from None
-    if row is None:  # cannot happen: INSERT ... RETURNING always returns the row
-        raise RuntimeError("INSERT returned no row")
-    return row
+    return {**row, "job_status": job["status"] if job else None}
 
 
 @router.post(
@@ -211,7 +227,7 @@ async def upload_file(request: Request, storage: StorageDep, response: Response)
     row = await run_in_threadpool(
         _save_file, request.app.state.pool, storage, data, sha256, media_type, filename
     )
-    item = Item(**_item_fields(row))  # no job: files wait for stage 2
+    item = Item(**_item_fields(row))  # queued: the worker extracts its text (D7b)
     response.headers["Location"] = f"/items/{item.id}"
     return item
 
@@ -310,7 +326,6 @@ def list_versions(item_id: int, conn: Conn) -> list[Version]:
     responses={
         404: {"description": "No such item"},
         409: {"description": "The item already has a job waiting or running"},
-        422: {"description": "Files are not processed yet (stage 2)"},
     },
 )
 def process_item(
@@ -319,19 +334,16 @@ def process_item(
     from_raw: Annotated[
         bool,
         Query(
-            description="No network: rebuild a link's versions from its landed files and "
-            "rewrite its chunks (after an extractor or chunker change, D28)"
+            description="Rebuild from what is stored: a link's versions from its landed "
+            "files (no network, D28), a file's text from its stored bytes (an image is "
+            "described again, D7b), then rewrite the chunks (after an extractor or "
+            "chunker change)"
         ),
     ] = False,
 ) -> Job:
     item = conn.execute("SELECT type FROM items WHERE id = %s", (item_id,)).fetchone()
     if item is None:
         raise _not_found(item_id)
-    if item["type"] == "file":
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Files are not processed yet (PDF text arrives in stage 2)",
-        )
     job = jobs.enqueue(conn, item_id, "rebuild" if from_raw else "process")
     if job is None:  # the unique index jobs_one_open_per_item said no
         raise HTTPException(
@@ -342,12 +354,15 @@ def process_item(
 
 @router.get("/{item_id}/chunks", response_model=list[Chunk])
 def list_chunks(item_id: int, conn: Conn) -> list[Chunk]:
-    """The item's passages in reading order (D36). Empty until its first job is done."""
+    """The item's passages in reading order (D36), each with its page (PDFs) and whether
+    it has a vector yet (D8). The vector itself is never sent. Empty until the item's
+    first job is done."""
     if conn.execute("SELECT 1 FROM items WHERE id = %s", (item_id,)).fetchone() is None:
         raise _not_found(item_id)
     rows = conn.execute(
         """
-        SELECT chunk_index AS index, start_char, end_char, text
+        SELECT chunk_index AS index, start_char, end_char, text, page,
+               embedding IS NOT NULL AS embedded, embedding_model
         FROM chunks WHERE item_id = %s ORDER BY chunk_index
         """,
         (item_id,),
@@ -355,10 +370,59 @@ def list_chunks(item_id: int, conn: Conn) -> list[Chunk]:
     return [Chunk(**row) for row in rows]
 
 
+@router.get(
+    "/{item_id}/text",
+    response_model=FileText,
+    summary="A file's extracted text: a PDF's pages, or an image's description (D7b)",
+    responses={
+        404: {"description": "No such item, or the file's text is not extracted yet"},
+        422: {"description": "The item is not a file"},
+    },
+)
+def get_file_text(item_id: int, conn: Conn) -> FileText:
+    """The whole text the file's chunks point into: chunk.text == text[start_char:end_char]."""
+    item = conn.execute("SELECT type FROM items WHERE id = %s", (item_id,)).fetchone()
+    if item is None:
+        raise _not_found(item_id)
+    if item["type"] != "file":
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Only files have extracted text. A note's text is its body; a link's "
+            "is in GET /items/{id} (content).",
+        )
+    row = conn.execute(
+        """
+        SELECT text, text_sha256, extractor, page_starts, page_ends, created_at
+        FROM file_texts WHERE item_id = %s
+        """,
+        (item_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=f"Item {item_id} has no extracted text yet; see its status",
+        )
+    pages = None
+    if row["page_starts"] is not None:
+        pages = [
+            Page(number=n, start_char=s, end_char=e)
+            for n, (s, e) in enumerate(zip(row["page_starts"], row["page_ends"], strict=True), 1)
+        ]
+    return FileText(
+        item_id=item_id,
+        text=row["text"],
+        text_sha256=row["text_sha256"],
+        extractor=row["extractor"],
+        kind="pages" if pages is not None else "description",
+        pages=pages,
+        created_at=row["created_at"],
+    )
+
+
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_item(item_id: int, conn: Conn, storage: StorageDep) -> Response:
-    # Rows first (fetches, versions, jobs and chunks go with the item, ON DELETE CASCADE),
-    # then files.
+    # Rows first (fetches, versions, jobs, chunks and a file's text go with the item,
+    # ON DELETE CASCADE), then files.
     # In that order a failure can only leave unused files, never rows pointing at nothing.
     deleted = conn.execute(
         "DELETE FROM items WHERE id = %s RETURNING type, sha256", (item_id,)
