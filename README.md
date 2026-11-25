@@ -108,7 +108,7 @@ curl -s localhost:8000/conversations -H 'content-type: application/json' \
 
 ### Cost: usage, the daily cap and the rate limit
 
-Every model call (answers, image descriptions, embeddings, the eval's judge) is recorded with its tokens and an estimated cost (D39). The estimate uses list prices kept in the code (Claude's from Anthropic's model table); Voyage's default price is a placeholder you should check and set (`VOYAGE_PRICE_PER_MTOK`).
+Every model call (answers, image descriptions, embeddings, the eval's judge) is recorded with its tokens and an estimated cost (D39). The estimate uses list prices kept in the code (Claude's from Anthropic's model table); Voyage's is a setting, `VOYAGE_PRICE_PER_MTOK`, with `voyage-4`'s list price as its default.
 
 ```bash
 curl -s localhost:8000/usage        # today (UTC) and the last 7 days, per model and purpose

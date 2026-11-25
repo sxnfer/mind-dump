@@ -106,15 +106,16 @@ def test_voyage_reports_its_own_token_counts(conn: Conn) -> None:
         data = [{"index": i, "embedding": [0.0] * 1024} for i in range(n)]
         return httpx2.Response(200, json={"data": data, "usage": {"total_tokens": 7 * n}})
 
-    record = UsageRecorder.for_connection(conn, settings())
+    cfg = settings(voyage_price_per_mtok=Decimal("1000"))  # a round price, not the default
+    record = UsageRecorder.for_connection(conn, cfg)
     http = httpx2.Client(transport=httpx2.MockTransport(answer))
     voyage = VoyageEmbedder("key", "voyage-4", http=http, batch_size=2, on_usage=record)
     voyage.embed_documents(["a", "b", "c"])
     voyage.embed_query("q")
     got = [(r["purpose"], r["input_tokens"]) for r in rows(conn)]
     assert got == [("embed_documents", 14), ("embed_documents", 7), ("embed_query", 7)]
-    # The unverified placeholder price (VOYAGE_PRICE_PER_MTOK) applies: 7 tokens x $0.20/M.
-    assert rows(conn)[-1]["cost_usd"] == Decimal("0.000001")
+    # VOYAGE_PRICE_PER_MTOK applies: 7 tokens x $1000/M.
+    assert rows(conn)[-1]["cost_usd"] == Decimal("0.007000")
 
 
 def test_a_claude_description_records_the_response_usage(conn: Conn) -> None:

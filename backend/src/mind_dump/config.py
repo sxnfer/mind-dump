@@ -46,9 +46,10 @@ DEFAULT_MODEL_PRICES: dict[str, Price] = {
     "claude-haiku-5-5": _price("0.10", "0.50", "0.125", "0.01"),
     "claude-fable-5-1": _price("10", "50", "12.50", "0.25"),
 }
-# NOT VERIFIED: a placeholder for Voyage AI's embedding price (US dollars per million
-# tokens). Check it against Voyage AI's pricing page and set VOYAGE_PRICE_PER_MTOK.
-DEFAULT_VOYAGE_PRICE_PER_MTOK = "0.20"
+# Voyage AI's list price for voyage-4, in US dollars per million tokens (checked on
+# 2026-11-25 at docs.voyageai.com/docs/pricing; the first 200 million tokens are free).
+# Set VOYAGE_PRICE_PER_MTOK if EMBEDDING_MODEL changes: voyage-4-large is 0.12, -lite 0.02.
+DEFAULT_VOYAGE_PRICE_PER_MTOK = "0.06"
 
 
 @dataclass(frozen=True)
