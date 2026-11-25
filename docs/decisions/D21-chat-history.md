@@ -1,6 +1,6 @@
 # D21: Chat history
 
-Status: Approved, 2026-11-25 (decided by Claude under San's delegation; San to review)
+Status: Approved, 2026-11-25 (decided by Claude under San's delegation; reviewed and approved by San the same day)
 Problem: a follow-up ("explain that simply") and a chat about one citation (Discuss) need the earlier turns. The Messages API is stateless: every request must carry the whole conversation.
 Without a tool: every question starts from nothing. "What about the second one?" has no meaning.
 Options: `conversations` and `messages` tables in Postgres; history kept only in the app, sent with each request.

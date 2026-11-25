@@ -1,6 +1,6 @@
 # D38: Citations and grounding
 
-Status: Approved, 2026-11-25 (decided by Claude under San's delegation; San to review)
+Status: Approved, 2026-11-25 (decided by Claude under San's delegation; reviewed and approved by San the same day)
 Problem: every claim in an answer must point at the exact item, page and passage it came from, and the owner must see when the items do not hold the answer (the Trust row in `product.md`).
 Without a tool: an answer in fluent prose that may come from the model's own memory, with no way to check which saved passage, if any, says it.
 Options: the model writes a marker with the chunk id and our code checks it; trust the model's own list of sources; the API's built-in citations feature.

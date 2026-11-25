@@ -1,6 +1,6 @@
 # D37: Hybrid search
 
-Status: Approved, 2026-11-25 (decided by Claude under San's delegation; San to review). Amended the same day, twice: the keyword rule after the first keyword eval, and hybrid's keyword input after the first eval with real vectors.
+Status: Approved, 2026-11-25 (decided by Claude under San's delegation; reviewed and approved by San the same day). Amended the same day, twice: the keyword rule after the first keyword eval, and hybrid's keyword input after the first eval with real vectors.
 Problem: the owner must find any saved passage, by the exact words in it (a project ID, an error code) or by what it means (a question in other words), and narrow the search by type, date, tag or item (M4; Discuss in M5 searches one item).
 Without a tool: one kind of search only. Meaning alone misses exact words such as `DQ-117` or `MD-2291`; words alone miss "woodland catches fire" when the passage says "the forest burns".
 Options: for words, Postgres full-text search or a separate search engine; for meaning, pgvector or a separate vector database; to merge the two lists, a weighted sum of normalised scores, or Reciprocal Rank Fusion (RRF); or only one of the two lists.
