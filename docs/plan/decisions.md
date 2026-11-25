@@ -37,13 +37,13 @@ Read each row in this order: what breaks without a solution, then the options, t
 | D6 | Background work | `jobs` table in Postgres, a status per job (queued, running, done, failed, dead), claimed with `FOR UPDATE SKIP LOCKED` and a lease; P3 chunks only, embedding waits for D8 | No new service; each job fails and retries on its own; "done" commits with the chunks (D30). See `docs/decisions/D06-background-work.md`. |
 | D35 | Retries | Retry only timeouts, connection errors, 429 and 5xx; never other 4xx; 3 tries, waits of 1 then 5 minutes; then `dead` | Asking again only helps when the answer can change. See `docs/decisions/D35-retries.md`. |
 | D36 | Chunking | Paragraphs packed to about 1,000 characters, long paragraphs cut at sentence ends, no overlap; each chunk keeps its index and character positions | Whole ideas stay together, the rule is explainable, and no tokenizer is needed before D8. See `docs/decisions/D36-chunking.md`. |
+| D7b | Content extraction (PDFs, images) | PDFs: `pypdf`, page by page; chunks never cross a page. Images: a description from Claude (D8), including visible text, stored as a description. Text kept in `file_texts`, rebuildable from the file | BSD and pure Python, gives pages for citations; PyMuPDF is AGPL, pdfplumber pulls in more than we use; OCR can't describe a photo. Approved 2026-11-25 by Claude under San's delegation; San to review. See `docs/decisions/D07b-file-extraction.md`. |
+| D8 | Embeddings and LLM | Voyage AI `voyage-4` (1,024 dimensions) over plain `httpx2`; Claude (`claude-opus-5-5`) through the `anthropic` SDK; both behind small interfaces; keys optional, from the environment | Anthropic points to Voyage for embeddings; one endpoint needs no SDK; the Claude SDK gives typed errors, retries and tool-use types. Approved 2026-11-25 by Claude under San's delegation; San to review. See `docs/decisions/D08-models.md`. |
 
 ## Open
 
 | # | Decision | Problem it solves | Options to compare | Lean and why | Needed by |
 | --- | --- | --- | --- | --- | --- |
-| D7b | Content extraction (PDFs, images) | Turn PDFs and images into text | Reuse the RAG Galaxy parser (pymupdf, pdfplumber), OCR, a vision model | Reuse what you built. Add one source type at a time. | P2 / M2 |
-| D8 | Embeddings and LLM | Search by meaning; answers and tags | Hosted model API (owner's key), a local model | Hosted API with the owner's key; a local model as an option later. | M3 |
 | D20 | Reranking | The first search returns close but not best chunks | None, a cross-encoder model, ask the LLM to rank | None first. Add one only if the eval set shows a gain. | M4 |
 | D9 | Agent loop | The model must call search and read items | Hand-written tool loop, an agent framework | Hand-written loop. About 100 lines, and you see every step. | M5 |
 | D21 | Chat history | A chat about a citation needs memory of earlier turns | Tables in Postgres, keep it in the app only | Postgres tables. Same backups, and you can query it. | M5 |
