@@ -5,7 +5,7 @@
 # Layers go from "changes rarely" to "changes every commit", so a code change
 # reuses the cached library layer.
 
-ARG PYTHON_VERSION=3.12
+ARG PYTHON_VERSION=3.12.0
 
 # ---------- builder ----------
 FROM python:${PYTHON_VERSION}-slim AS builder
