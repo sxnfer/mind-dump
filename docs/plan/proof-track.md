@@ -93,11 +93,13 @@
 
 ## P4: CI, checks before merge
 
+**San decided (D40).** A pull request's branch must be up to date with `main` before it merges. Before merge, besides lint, tests, the image and the smoke test: the lockfile is current (`uv lock --check`); migrations run twice from an empty database and the second run applies nothing; gitleaks scans the PR's commits; `uv audit` checks the dependencies and Grype the image, and both block only when a fix exists (image: high or critical). A nightly run scans without that filter and emails San. Every action is pinned to a commit hash, and every scanner by digest or SHA-256. The real-model evals stay out of CI; no model keys in GitHub.
+
 **San decides.**
 - What must pass before code may enter `main`: lint? tests against a real database? migrations from an empty database? secret and security scans?
 - What is slow enough to run only after merge instead?
 
-**Agent builds.** A GitHub Actions workflow with your checks, made a required check in the P0 branch protection.
+**Agent builds.** A GitHub Actions workflow with your checks, made a required check in the P0 branch protection. Built on branch `p4-ci-gate`, in four slices: (A) `uv lock --check` and `backend/scripts/migrations_twice.sh` in the backend job; (B) a new job `scans (secrets, dependencies, image)` with gitleaks 8.30.1 (SHA-256-pinned release file) over the PR's or push's commits; (C) in that job, `uv audit` read by `backend/scripts/audit_gate.py` (tests on real `uv audit` output in `test_audit_gate.py`) and Grype 0.122.1 (digest-pinned image, `--only-fixed --fail-on high`, accepted risks in `.grype.yaml`), plus `.github/workflows/nightly-scans.yml`; (D) every action pinned to a full commit hash. The ruleset changes (require the new job; require an up-to-date branch) come after the merge.
 **Proof.** A PR with a failing test can't merge (screenshot). A deliberate semantic conflict (a function renamed on one branch, the old name called on another) merges without a Git conflict, and CI catches it. Each scan's log shows it really ran.
 **Defend.**
 - Why can a merge with no conflicts still break the code? What catches it?
