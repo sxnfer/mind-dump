@@ -2,8 +2,8 @@
 # filter, over the whole history and today's vulnerability databases.
 #
 # Why not in the gate: these read databases that change every day, so they can fail with
-# no code change, on findings nobody can fix yet. A pull request should fail only for
-# something its author can act on; this run tells the owner about the rest.
+# no code change, on findings nobody can fix yet. The gate blocks only findings with a
+# fix (San's rule, D40); this run reports the rest. Actions are pinned as in ci.yml.
 #
 # Who hears about it: GitHub emails a failed scheduled run to the person who last
 # changed the `cron` line below (San). Start it by hand from the Actions tab
@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0   # every commit, for the full-history secret scan
 
@@ -52,7 +52,7 @@ jobs:
           echo "Secret scan: full history, $(git rev-list --count --no-merges HEAD) non-merge commit(s), all branches fetched"
           "$RUNNER_TEMP/gitleaks" git . --redact --no-banner --verbose
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         if: ${{ !cancelled() }}
         with:
           version: "0.13.7"
@@ -66,11 +66,11 @@ jobs:
           echo "Dependency audit: backend/uv.lock against OSV, every finding fails"
           uv audit --locked --preview-features audit-command
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
         if: ${{ !cancelled() }}
       - name: Build image for the scan
         if: ${{ !cancelled() }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: backend
           load: true
