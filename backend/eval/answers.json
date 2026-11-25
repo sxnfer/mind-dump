@@ -1,0 +1,89 @@
+{
+  "about": "The answers eval (M5). Each answerable question names its corpus document (file name without .md), an exact passage of it that holds the answer, and the key facts the answer must state: each fact is a list of spellings, and one of them must appear in the answer (case does not matter). A citation points at the expected passage when it cites a chunk of that document whose text contains the passage. The unanswerable questions ask about things the corpus does not cover: the answer must come back not grounded (no valid citation). Adapted from golden.json (the search eval); the corpus is original text.",
+  "questions": [
+    {
+      "id": 1,
+      "question": "What does a carbon credit's serial number encode?",
+      "document": "01-registries",
+      "passage": "encodes the project, the vintage year and a position in the issuance batch",
+      "facts": [["project"], ["vintage"], ["batch"]]
+    },
+    {
+      "id": 2,
+      "question": "Once a company has retired a credit, can it transfer it to someone else?",
+      "document": "01-registries",
+      "passage": "A retired credit can never be transferred again.",
+      "facts": [["never", "cannot", "can't", "can not"]]
+    },
+    {
+      "id": 3,
+      "question": "How many credits from project MD-2291 went to the buffer pool?",
+      "document": "12-project-field-notes",
+      "passage": "of which 2,770 went to the buffer pool",
+      "facts": [["2,770", "2770"]]
+    },
+    {
+      "id": 4,
+      "question": "How many times can a renewable crediting period be renewed?",
+      "document": "04-crediting-periods",
+      "passage": "can be renewed up to two times, giving at most twenty-one years",
+      "facts": [["two", "twice", "2 times"]]
+    },
+    {
+      "id": 5,
+      "question": "What share of a forestry project's credits goes into the buffer pool?",
+      "document": "05-permanence",
+      "passage": "typically between ten and twenty percent, into a shared buffer account",
+      "facts": [["ten", "10"], ["twenty", "20"]]
+    },
+    {
+      "id": 6,
+      "question": "What does the registry do with the buffer pool when a protected forest burns?",
+      "document": "05-permanence",
+      "passage": "the registry cancels credits from the buffer pool equal to the carbon lost",
+      "facts": [["cancel"]]
+    },
+    {
+      "id": 7,
+      "question": "How does a work queue notice that a worker crashed while holding a task?",
+      "document": "08-queues",
+      "passage": "if it crashes, the timeout runs out and the task becomes visible again for someone else",
+      "facts": [["timeout", "lease"], ["visible"]]
+    },
+    {
+      "id": 8,
+      "question": "What does alert DQ-117 mean?",
+      "document": "10-data-contracts",
+      "passage": "alert DQ-117 always means duplicate invoice numbers in the billing export",
+      "facts": [["duplicate invoice"]]
+    },
+    {
+      "id": 9,
+      "question": "How does a type 2 slowly changing dimension keep a customer's old address?",
+      "document": "09-history-tables",
+      "passage": "closes it by setting a valid_to timestamp",
+      "facts": [["valid_to"]]
+    },
+    {
+      "id": 10,
+      "question": "What share of the seedlings planted in the first year of project MD-2291 survived?",
+      "document": "12-project-field-notes",
+      "passage": "only about forty percent survived",
+      "facts": [["forty", "40"]]
+    }
+  ],
+  "unanswerable": [
+    {
+      "id": 101,
+      "question": "What is the market price of one carbon credit in euros today?"
+    },
+    {
+      "id": 102,
+      "question": "Which programming language is the Apache Kafka broker written in?"
+    },
+    {
+      "id": 103,
+      "question": "Who is the chief executive of the Verra registry?"
+    }
+  ]
+}

@@ -4,7 +4,7 @@
 
 An open-source "second brain" for macOS. Drop links, files, images and notes on a black panel at the notch. A local backend saves them at once, processes them in the background, and answers questions with citations. Each person runs their own copy on their own Mac, with their own AI model key.
 
-> Status: Milestone 4. Press + on the panel to save the link on your clipboard, or a note; upload PDFs and images through the API. A worker reads, chunks and (with your key) embeds each item in the background. Search finds passages by exact words, by meaning, or both, with filters; an eval measures how well.
+> Status: Milestone 5. Press + on the panel to save the link on your clipboard, or a note; upload PDFs and images through the API. A worker reads, chunks and (with your key) embeds each item in the background. Search finds passages by exact words, by meaning, or both, with filters; an eval measures how well. Ask a question and get an answer whose every claim cites the item, page and passage, then chat about one cited passage; a daily cost cap and a rate limit keep the bill small.
 
 ## Run it
 
@@ -78,6 +78,58 @@ uv run python -m mind_dump.eval --no-results    # print only
 
 It reads `VOYAGE_API_KEY` from the environment or from `.env`; with a key, the 30 chunks and 20 questions are embedded (a few thousand tokens). CI runs it in keyword mode and fails if keyword recall@5 drops below its floor.
 
+### Ask and discuss
+
+Ask a question (it needs `ANTHROPIC_API_KEY`). An agent searches your items, reads around what it finds, and answers. After each claim it writes a marker such as `[c:12]`: chunk 12 is in `citations`, with its item, page, character positions and the quoted passage. Our code, not the model, checks every marker: one for a passage the agent was never shown is removed and listed in `invalid_citations` (D38). An answer with no valid citation comes back `"grounded": false`: your items probably don't hold the answer, and the agent is told to say so instead of answering from memory.
+
+```bash
+curl -s localhost:8000/ask -H 'content-type: application/json' \
+  -d '{"question": "What share of credits goes to the buffer pool?"}'
+curl -s localhost:8000/ask -H 'content-type: application/json' \
+  -d '{"question": "What did I save about queues?", "type": "link", "from": "2026-11-01"}'
+curl -s localhost:8000/conversations/1                          # the chat, with citations
+curl -s localhost:8000/conversations/1/messages -H 'content-type: application/json' \
+  -d '{"text": "Explain that more simply"}'                     # a follow-up
+curl -sN "localhost:8000/conversations/1/messages?stream=true" -H 'content-type: application/json' \
+  -d '{"text": "Give an example"}'                              # streamed: Server-Sent Events
+```
+
+- Streaming (`?stream=true` or `Accept: text/event-stream`) sends `status` events (thinking, searching with the query, reading an item), `delta` events with the answer's text as it comes, then `final` with the same JSON as the plain call, or `error`. Nothing is saved unless `final` arrives.
+- Discuss a citation: start a chat about one item and passage, then send messages to it. Every search in it is limited to that item by our code, and the first message carries the passage and the ones just before and after it.
+
+```bash
+curl -s localhost:8000/conversations -H 'content-type: application/json' \
+  -d '{"item_id": 7, "chunk_id": 12}'          # or "start_char": 1040, if the chunk was replaced
+```
+
+- A failed answer (Claude down: 503; another API error or an answer cut off: 502; Claude declines: 422) saves nothing, not even your question: send it again.
+- Old answers keep their citations' quotes and positions after the item is re-processed or deleted (`chunk_id` becomes `null`). A chat about a deleted item can still be read, but takes no new messages (409).
+- `GET /conversations` lists chats, newest first; `DELETE /conversations/{id}` deletes one.
+
+### Cost: usage, the daily cap and the rate limit
+
+Every model call (answers, image descriptions, embeddings, the eval's judge) is recorded with its tokens and an estimated cost (D39). The estimate uses list prices kept in the code (Claude's from Anthropic's model table); Voyage's is a setting, `VOYAGE_PRICE_PER_MTOK`, with `voyage-4`'s list price as its default.
+
+```bash
+curl -s localhost:8000/usage        # today (UTC) and the last 7 days, per model and purpose
+```
+
+- `DAILY_COST_CAP_USD` (default 2.00): when today's estimated total reaches it, asking answers `429` until midnight UTC. One answer can overshoot it a little: the cap is checked before each question.
+- `ASK_RATE_PER_MINUTE` (default 10): more questions than that in 60 seconds answer `429` with `Retry-After`.
+- `LLM_EFFORT` (default `medium`) sets how much Claude thinks per answer, and so its cost; `AGENT_MAX_TURNS` (default 6) bounds its searches per question.
+
+Set them in `.env`, then `docker compose up -d api worker`.
+
+### Measure answers
+
+`python -m mind_dump.eval_answers` asks 10 questions about the eval corpus (and 3 it can't answer) through the real agent, and checks for each: every citation valid, the expected passage cited, the key facts stated, and (one small Claude call per citation) whether the cited passage supports its sentence. It writes the "Answers" section of `docs/results.md`. It needs `ANTHROPIC_API_KEY` (and uses `VOYAGE_API_KEY` for hybrid search if set); every call it makes is priced and the total is printed. Without the key it says the eval is pending.
+
+```bash
+cd backend
+uv run python -m mind_dump.eval_answers               # needs ANTHROPIC_API_KEY
+uv run python -m mind_dump.eval_answers --no-results  # print only
+```
+
 ### AI model keys (optional)
 
 Each owner uses their own keys (D8). Both are optional:
@@ -85,7 +137,7 @@ Each owner uses their own keys (D8). Both are optional:
 | Key | Get it at | Without it |
 | --- | --- | --- |
 | `VOYAGE_API_KEY` | dashboard.voyageai.com | Everything is saved, read and chunked; chunks have no vectors, so search finds exact words only (hybrid falls back to keyword results). |
-| `ANTHROPIC_API_KEY` | platform.claude.com | Images end in `error` (there is nothing to read without a description); notes, links and PDFs work. |
+| `ANTHROPIC_API_KEY` | platform.claude.com | Images end in `error` (there is nothing to read without a description), and asking answers `503`; notes, links, PDFs and search work. |
 
 Put them in `.env`, then:
 
@@ -95,7 +147,7 @@ docker compose exec worker python -m mind_dump.check_models       # OK per provi
 docker compose exec worker python -m mind_dump.embed_missing      # embed what was saved before
 ```
 
-Run `embed_missing` again after changing `EMBEDDING_MODEL`: vectors from two models can't be compared. When keys are set, item text goes to Voyage AI and images go to Anthropic.
+Run `embed_missing` again after changing `EMBEDDING_MODEL`: vectors from two models can't be compared. When keys are set, item text goes to Voyage AI, and images, questions and the passages the agent reads go to Anthropic.
 
 Right-click the panel to quit. The app is unsigned (see `docs/decisions/`), so build it from source.
 
@@ -118,12 +170,12 @@ uv run ruff check . && uv run ruff format .   # lint and format
 
 | Path | What lives there |
 | --- | --- |
-| `backend/` | API (FastAPI) and, from M3, workers. `Dockerfile`, tests. `eval/`: the search eval's corpus and golden questions (M4). |
+| `backend/` | API (FastAPI) and, from M3, workers. `Dockerfile`, tests. `eval/`: the corpus, the search eval's golden questions (M4) and the answers eval's questions (M5). |
 | `app/` | Native macOS app (SwiftUI in an `NSPanel`). |
 | `.github/workflows/` | CI: lint, test, image build and smoke test; Xcode build. |
 | `docs/plan/` | The plan and milestones. |
 | `docs/decisions/` | One record per approved decision, with the reasons. |
-| `docs/results.md` | The latest search eval numbers (M4). |
+| `docs/results.md` | The latest search eval numbers (M4) and answers eval numbers (M5). |
 
 ## Licence
 

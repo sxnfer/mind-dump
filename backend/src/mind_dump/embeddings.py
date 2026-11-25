@@ -13,6 +13,9 @@ Voyage is one HTTPS endpoint, so it is called with httpx2 (D33), not an SDK:
 Failures follow D35: timeouts, connection errors, 429 and 5xx are temporary (the job is
 retried); 400, 401, 403 and other 4xx are permanent, with a reason that names the
 setting to check.
+
+Each request is reported to `on_usage` (D39), with the tokens Voyage says it used, so
+it is priced and counted toward the day's cap.
 """
 
 import hashlib
@@ -26,6 +29,7 @@ import httpx2
 
 from mind_dump.config import Settings
 from mind_dump.errors import PermanentError, TemporaryError
+from mind_dump.usage import Usage, UsageSink
 
 DIMENSIONS = 1024  # chunks.embedding is vector(1024) (migration 009)
 VOYAGE_URL = "https://api.voyageai.com/v1/embeddings"
@@ -72,9 +76,11 @@ class VoyageEmbedder:
         model: str,
         http: httpx2.Client | None = None,
         batch_size: int = BATCH_SIZE,
+        on_usage: UsageSink | None = None,
     ) -> None:
         self.model = model
         self.batch_size = batch_size
+        self.on_usage = on_usage  # D39: one model_usage row per request
         self._api_key = api_key
         self._http = http or httpx2.Client(timeout=TIMEOUT)
         self.total_tokens = 0  # usage reported by Voyage, summed: the cost meter
@@ -107,7 +113,8 @@ class VoyageEmbedder:
         except (httpx2.NetworkError, httpx2.RemoteProtocolError, httpx2.ProxyError) as exc:
             raise TemporaryError(f"Can't reach Voyage AI: {exc}") from exc
         self._check(response)
-        return self._vectors(response, len(texts))
+        purpose = "embed_query" if input_type == "query" else "embed_documents"
+        return self._vectors(response, len(texts), purpose)
 
     def _check(self, response: httpx2.Response) -> None:
         code = response.status_code
@@ -124,14 +131,18 @@ class VoyageEmbedder:
             )
         raise PermanentError(f"{what}: {_detail(response)}")
 
-    def _vectors(self, response: httpx2.Response, expected: int) -> list[Vector]:
+    def _vectors(self, response: httpx2.Response, expected: int, purpose: str) -> list[Vector]:
         try:
             body = response.json()
             data = body["data"]
             by_index = {int(row["index"]): row["embedding"] for row in data}
-            self.total_tokens += int(body.get("usage", {}).get("total_tokens", 0))
+            tokens = int(body.get("usage", {}).get("total_tokens", 0))
         except (ValueError, KeyError, TypeError) as exc:
             raise TemporaryError(f"Voyage AI sent an answer we can't read: {exc}") from exc
+        # Paid for, whatever happens next: record it before the checks below can raise.
+        self.total_tokens += tokens
+        if self.on_usage is not None:
+            self.on_usage(Usage("voyage", self.model, purpose, input_tokens=tokens))
         # Read by index, never by position: the index says which input a vector belongs to.
         if sorted(by_index) != list(range(expected)):
             raise TemporaryError(
@@ -164,27 +175,40 @@ class FakeEmbedder:
     `on_call` runs before each batch, so a test can check where the call happens (outside
     the D30 transaction) or change the database at exactly that moment."""
 
-    def __init__(self, model: str = "fake-embedder", on_call: Callable[[], None] | None = None):
+    def __init__(
+        self,
+        model: str = "fake-embedder",
+        on_call: Callable[[], None] | None = None,
+        on_usage: UsageSink | None = None,
+    ):
         self.model = model
         self.on_call = on_call
+        self.on_usage = on_usage  # reports one word per token, so usage tests have numbers
         self.calls = 0
         self.texts: list[str] = []
 
     def embed_documents(self, texts: list[str]) -> list[Vector]:
+        return self._embed(texts, "embed_documents")
+
+    def embed_query(self, text: str) -> Vector:
+        return self._embed([text], "embed_query")[0]
+
+    def _embed(self, texts: list[str], purpose: str) -> list[Vector]:
         if not texts:
             return []
         if self.on_call is not None:
             self.on_call()
         self.calls += 1
         self.texts += texts
+        if self.on_usage is not None:
+            tokens = sum(len(t.split()) for t in texts)
+            self.on_usage(Usage("fake", self.model, purpose, input_tokens=tokens))
         return [fake_vector(t, self.model) for t in texts]
 
-    def embed_query(self, text: str) -> Vector:
-        return self.embed_documents([text])[0]
 
-
-def create_embedder(settings: Settings) -> Embedder | None:
-    """Voyage when VOYAGE_API_KEY is set; None (chunks keep no vectors) when it is not."""
+def create_embedder(settings: Settings, on_usage: UsageSink | None = None) -> Embedder | None:
+    """Voyage when VOYAGE_API_KEY is set; None (chunks keep no vectors) when it is not.
+    on_usage receives every request's token count (D39)."""
     if settings.voyage_api_key is None:
         return None
-    return VoyageEmbedder(settings.voyage_api_key, settings.embedding_model)
+    return VoyageEmbedder(settings.voyage_api_key, settings.embedding_model, on_usage=on_usage)

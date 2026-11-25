@@ -2,7 +2,7 @@
 
 > The source of truth is `backend/migrations/`. Update this diagram in the same PR as any new migration.
 
-As of migration 010 (M4):
+As of migration 011 (M5):
 
 ```mermaid
 erDiagram
@@ -15,6 +15,9 @@ erDiagram
     items ||--o{ chunks : "cut into"
     item_versions |o--o{ chunks : "cut from"
     items ||--o| file_texts : "files: text read from"
+    conversations ||--o{ messages : "holds"
+    conversations |o--o{ model_usage : "paid for (SET NULL)"
+    conversations |o--o{ ask_requests : "asked in (SET NULL)"
 
     items {
         bigint      id PK "identity"
@@ -95,6 +98,54 @@ erDiagram
         bigint item_id PK, FK "ON DELETE CASCADE"
         bigint tag_id  PK, FK "ON DELETE CASCADE"
     }
+    conversations {
+        bigint      id PK "identity"
+        text        title "1-200 chars; first question if not given"
+        bigint      scope_item_id "Discuss: the item; NO foreign key (snapshot)"
+        text        scope_item_title "as it was"
+        integer     scope_start_char "the cited passage, by position"
+        integer     scope_end_char "> scope_start_char"
+        integer     scope_page "PDFs"
+        text        scope_text "the passage as the owner saw it"
+        jsonb       filters "POST /ask: type, from, to, tag"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    messages {
+        bigint      id PK "identity"
+        bigint      conversation_id FK "ON DELETE CASCADE"
+        integer     seq "1, 2, ...; unique per conversation"
+        text        role "user | assistant"
+        text        text "display text; answers keep [c:id] markers"
+        json        api_messages "exact API messages of the turn (json keeps key order)"
+        jsonb       citations "snapshots: item, page, positions, quote"
+        jsonb       invalid_citations "markers removed, with the reason"
+        jsonb       sources "passages handed to the model this turn"
+        boolean     grounded "assistant only"
+        text        stop_reason
+        boolean     incomplete "turn limit reached"
+        text        model "the model that answered"
+        jsonb       usage "this turn's tokens and estimated cost"
+        timestamptz created_at
+    }
+    model_usage {
+        bigint      id PK "identity"
+        timestamptz created_at
+        text        provider "anthropic | voyage | fake"
+        text        model "the model that served the call"
+        text        purpose "answer | judge | describe | check | embed_documents | embed_query"
+        integer     input_tokens
+        integer     output_tokens
+        integer     cache_creation_input_tokens
+        integer     cache_read_input_tokens
+        numeric     cost_usd "estimate from the price table (D39)"
+        bigint      conversation_id FK "ON DELETE SET NULL"
+    }
+    ask_requests {
+        bigint      id PK "identity"
+        timestamptz created_at "the rate limit counts the last 60 s"
+        bigint      conversation_id FK "ON DELETE SET NULL"
+    }
     schema_migrations {
         text        version PK "001, 002, ..."
         text        name
@@ -128,6 +179,13 @@ erDiagram
 | Deleting an item deletes its `file_texts` | `ON DELETE CASCADE`; the API then deletes the stored file. |
 | `tags.name` is unique | One row per tag name; items share it. |
 | `chunks.text_tsv` is `GENERATED ALWAYS AS (to_tsvector('english', text)) STORED` | Postgres recomputes it whenever `text` changes, so the words search matches can never disagree with the chunk (D37). |
+| `conversations.scope_item_id` has no foreign key | Deleting an item must not delete the chats about it. The chat stays readable (each answer keeps its citation snapshots); the API refuses new messages in it (409). Item ids are never reused, so a missing `items` row means deleted. |
+| A conversation's passage has an item, and `scope_end_char > scope_start_char` with its `scope_text` | The passage is kept by position, so it survives re-chunking (D36); the text is what the owner clicked. |
+| A message's `(conversation_id, seq)` is unique | One order per conversation. A message and its answer are saved together; a second answer racing in the same conversation loses (409), so history never forks (D21). |
+| `messages.api_messages` is `json`, not `jsonb` | `json` keeps the text exactly, key order included; the next request replays it unchanged (D21). |
+| An assistant message has `grounded` and `incomplete` | Every answer says whether it is backed by a valid citation (D38) and whether the turn limit cut it short (D9). |
+| Deleting a conversation deletes its `messages`; its `model_usage` and `ask_requests` rows stay (`ON DELETE SET NULL`) | The money was spent, and the questions were asked (D39). |
+| `model_usage` token counts and `cost_usd` are 0 or more | A row is one model call (D39). |
 
 ## Indexes
 
@@ -146,6 +204,9 @@ erDiagram
 | `item_tags` primary key `(item_id, tag_id)` | Tags of one item |
 | `item_tags_tag_id_idx` | Items with one tag (the search `tag` filter) |
 | `chunks_text_tsv_idx` (GIN on `text_tsv`) | Keyword search: `text_tsv @@` the query from `websearch_to_tsquery('english', q)`, or its any-word form (every ` & ` turned into ` \| `) (D37) |
+| `messages_conversation_seq_key` `(conversation_id, seq)` | A conversation's messages in order: the history replay and `GET /conversations/{id}` |
+| `model_usage_created_at_idx` | Today's total for the cost cap, and `GET /usage` (D39) |
+| `ask_requests_created_at_idx` | The rate limit: questions in the last 60 seconds (D39) |
 | `chunks_embedding_hnsw_idx` (HNSW, `vector_cosine_ops`) | Vector search with no filter: the nearest chunks by cosine distance (`<=>`). Approximate; under a filter, search measures the filtered rows exactly instead, so a filter can't lose a match (D37). |
 
 Tags (M4): `PUT /items/{id}/tags` replaces an item's set. Names are normalised one way (trimmed, inner whitespace squeezed to one space, lowercased); unused tag rows stay as the owner's vocabulary.

@@ -59,10 +59,16 @@ EVAL_DIR = _BACKEND / "eval"
 RESULTS_FILE = _REPO / "docs" / "results.md"
 MIGRATIONS_DIR = _BACKEND / "migrations"
 DEFAULT_DATABASE = "mind_dump_eval"
+# The answers eval (eval_answers.py) owns this section of the results file; this eval
+# rewrites everything above it and keeps it.
+ANSWERS_HEADING = "## Answers (M5)"
 TOP_K = 5  # recall@5
 DEPTH = 10  # MRR@10: how far down the list a hit still counts for MRR
 MODES: tuple[search_mod.Mode, ...] = ("keyword", "vector", "hybrid")
-_TABLES = "items, tags, item_tags, fetches, item_versions, jobs, chunks, file_texts"
+_TABLES = (
+    "items, tags, item_tags, fetches, item_versions, jobs, chunks, file_texts, "
+    "conversations, messages, model_usage, ask_requests"
+)
 
 
 @dataclass(frozen=True)
@@ -383,6 +389,13 @@ def results_markdown(report: Report, commit: str, when: datetime) -> str:
     return "\n".join(lines) + "\n"
 
 
+def keep_answers(path: Path) -> str:
+    """The Answers section already in the results file, to write back after ours."""
+    old = path.read_text() if path.exists() else ""
+    _, found, rest = old.partition(ANSWERS_HEADING)
+    return "\n" + found + rest if found else ""
+
+
 # ---------- the command ----------
 
 
@@ -462,7 +475,8 @@ def main(argv: Sequence[str] | None = None, out: Callable[[str], None] = print) 
     if args.fake_embedder:
         out("\n--fake-embedder: vector numbers are meaningless, so no results file is written.")
     elif not args.no_results:
-        args.results.write_text(results_markdown(report, _commit(), datetime.now(UTC)))
+        text = results_markdown(report, _commit(), datetime.now(UTC))
+        args.results.write_text(text + keep_answers(args.results))
         out(f"\nWrote {args.results}")
 
     if report.unfindable:
