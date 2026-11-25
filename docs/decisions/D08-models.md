@@ -1,6 +1,6 @@
 # D8: Embeddings and LLM
 
-Status: Approved, 2026-11-25 (LLM part decided by Claude under San's delegation, San to review; embeddings provider changed by San the same day)
+Status: Approved, 2026-11-25 (LLM part decided by Claude under San's delegation; embeddings provider changed by San the same day; the whole record reviewed and approved by San the same day)
 Problem: search by meaning needs a vector for every chunk, and images need a description (D7b); later, answers and tags need an LLM. Each owner runs their own copy with their own keys.
 Without a tool: keyword search only. "Mangrove restoration" never finds a chunk that says "coastal blue carbon", and images stay unreadable.
 Options: a hosted model API with the owner's key, or a local model. For the calls: an SDK, or plain HTTPS.

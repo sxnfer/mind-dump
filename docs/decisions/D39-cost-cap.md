@@ -1,6 +1,6 @@
 # D39: Cost cap and rate limit
 
-Status: Approved, 2026-11-25 (decided by Claude under San's delegation; San to review)
+Status: Approved, 2026-11-25 (decided by Claude under San's delegation; reviewed and approved by San the same day)
 Problem: each owner pays for their own model keys. A bug in the agent loop, or a stuck client asking again and again, must not run up a bill.
 Without a tool: the first sign of a runaway loop is the provider's invoice.
 Options: a cap and a rate limit kept in Postgres; a counter in memory; no cap (watch the provider's dashboard).

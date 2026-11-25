@@ -1,6 +1,6 @@
 # D9: Agent loop
 
-Status: Approved, 2026-11-25 (decided by Claude under San's delegation; San to review)
+Status: Approved, 2026-11-25 (decided by Claude under San's delegation; reviewed and approved by San the same day)
 Problem: to answer a question from the owner's items, the model must look things up: search for passages, then read the items around them, maybe search again, then answer (M5).
 Without a tool: one search with the question as typed, the top passages pasted into one model call. A question that needs a second search, or the text around a hit, gets a worse answer or none.
 Options: a hand-written loop on the Messages API; the SDK's Tool Runner helper; Anthropic's Managed Agents; an agent framework.

@@ -1,6 +1,6 @@
 # D7b: Text from PDFs and images
 
-Status: Approved, 2026-11-25 (decided by Claude under San's delegation; San to review)
+Status: Approved, 2026-11-25 (decided by Claude under San's delegation; reviewed and approved by San the same day)
 Problem: an uploaded PDF or image is only bytes (D34). Search, citations and answers need its text. A PDF holds text on pages; an image holds none we can read directly.
 Without a tool: files stay unsearchable. A saved methodology PDF or a photo of a whiteboard can be listed, but never found by what it says.
 Options: for PDFs, pypdf, PyMuPDF, or pdfplumber. For images, an OCR engine (Tesseract) or a vision model.

@@ -1,6 +1,6 @@
 # D20: Reranking
 
-Status: Approved, 2026-11-25 (decided by Claude under San's delegation; San to review)
+Status: Approved, 2026-11-25 (decided by Claude under San's delegation; reviewed and approved by San the same day)
 Problem: the first search (D37) can return passages that are close, but not the best one first. An answer (M5) built on the top passages is only as good as their order.
 Without a tool: the order is whatever hybrid search (RRF) gives.
 Options: none; a cross-encoder reranking model that reads the query and each passage together; ask the LLM to rank the passages.
