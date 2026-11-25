@@ -15,4 +15,5 @@
 - [ ] `main` stays releasable: unfinished work is not merged, or is behind a feature flag that is off.
 - [ ] No secrets: keys live in `.env`, and `.env.example` holds names only.
 - [ ] Any new dependency has an Approved decision in `docs/plan/decisions.md`.
-- [ ] CI is green (the ruleset blocks the merge until it is).
+- [ ] Changed `backend/pyproject.toml`? Ran `uv lock` and committed `uv.lock` (CI runs `uv lock --check`).
+- [ ] CI is green and the branch is up to date with `main` (the ruleset blocks the merge until both are).

@@ -183,13 +183,30 @@ uv run python -m mind_dump.migrate            # apply new migrations (needs DATA
 uv run ruff check . && uv run ruff format .   # lint and format
 ```
 
+## The CI gate
+
+Every pull request runs three jobs, and the ruleset blocks the merge until all pass (D14, D29, D40). The branch must also be up to date with `main`.
+
+| Check | Job | Run it on your Mac |
+| --- | --- | --- |
+| Lockfile matches `pyproject.toml` | backend | `cd backend && uv lock --check` (fix: `uv lock`) |
+| Lint, format, tests, search eval | backend | see "Develop the backend" |
+| Migrations from an empty database, twice | backend | `cd backend && DATABASE_URL=postgresql://mind_dump:<password>@localhost:5432/mind_dump_migcheck scripts/migrations_twice.sh` (creates that database; drop it after) |
+| Image build and smoke test | backend | `docker compose up` |
+| Secrets in the PR's commits (gitleaks) | scans | `docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --redact -v` |
+| Vulnerable dependencies with a fix (`uv audit`) | scans | `cd backend && uv audit --locked --output-format json > /tmp/audit.json; python3 scripts/audit_gate.py /tmp/audit.json --uv-exit $?` |
+| Image: high or critical with a fix (Grype) | scans | `docker build -t mind-dump-api:scan backend && docker save mind-dump-api:scan -o /tmp/image.tar && docker run --rm -v /tmp:/scan -v "$PWD/.grype.yaml:/c.yaml" anchore/grype:v0.122.1 docker-archive:/scan/image.tar -c /c.yaml --only-fixed --fail-on high` |
+| Xcode build | app | see "Run it" |
+
+Findings with no fix yet don't block a merge. `nightly-scans.yml` runs the scans without that filter every night (or by hand from the Actions tab) and fails, which emails the owner. An accepted risk is a dated entry with a reason: `--ignore <ID>` in `ci.yml` for `uv audit`, `.grype.yaml` for Grype. CI pins the scanners by digest or SHA-256, and every action by commit hash; the local commands above use version tags for brevity.
+
 ## Layout
 
 | Path | What lives there |
 | --- | --- |
 | `backend/` | API (FastAPI) and, from M3, workers. `Dockerfile`, tests. `eval/`: the corpus, the search eval's golden questions (M4) and the answers eval's questions (M5). |
 | `app/` | Native macOS app (SwiftUI in an `NSPanel`). |
-| `.github/workflows/` | CI: lint, test, image build and smoke test; Xcode build. |
+| `.github/workflows/` | CI: lint, test, migrations, image build and smoke test; Xcode build; secret, dependency and image scans (D40); nightly scans. |
 | `docs/plan/` | The plan and milestones. |
 | `docs/decisions/` | One record per approved decision, with the reasons. |
 | `docs/results.md` | The latest search eval numbers (M4) and answers eval numbers (M5). |
