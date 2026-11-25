@@ -39,14 +39,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.dropReceiver = drop
         drop.zoneContains = { [weak pointer] point in pointer?.contains(point) ?? false }
 
-        // An open panel takes the keyboard; anything else gives it back to your app.
-        island.onPanelChange = { [weak window, weak self] open in
+        // An open capsule takes the keyboard; anything else gives it back to your app.
+        island.onOpenChange = { [weak window] open in
             guard let window else { return }
             window.takesKeyboard = open
             if open { window.makeKey() } else { window.resignKey() }
         }
         // Closing stops an answer still on its way (the backend then saves nothing).
-        island.onPanelWillClose = { [weak self] in self?.ask.panelWillClose() }
+        island.onWillClose = { [weak self] in self?.ask.panelWillClose() }
         ask.reveal.linkView = window.contentView
         listenForPanelKeys()
 
@@ -90,13 +90,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return api
     }
 
-    /// Panel keys that belong to the panel, not to the text box: Tab switches mode, ⌘N
+    /// Keys that belong to the capsule, not to the text box: Tab switches mode, ⌘N
     /// starts a new question. A local monitor sees them before the text field does
     /// (the field would take Tab to move focus). No permission is needed for our own
     /// window's keys.
     private func listenForPanelKeys() {
         keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.island.presentation.isPanel else { return event }
+            guard let self, self.island.presentation.isOpen else { return event }
             let modifiers = event.modifierFlags.intersection([.command, .option, .control])
             if event.keyCode == 48, modifiers.isEmpty {  // Tab (and Shift-Tab)
                 self.panel.toggleMode()

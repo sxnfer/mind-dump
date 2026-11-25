@@ -1,18 +1,23 @@
 import QuartzCore
 import SwiftUI
 
-/// Ask mode, under the shared box: a hint, then the latest question, its answer as it
-/// flows, what the agent is doing, and finally the sources.
+/// Ask's answer card, under the capsule's line: a hairline, the question in small text,
+/// then what the agent is doing, the answer as it flows, and finally the sources. Before
+/// anything is asked (and with no error) it takes no height, and the capsule is one line.
 ///
 /// The answer sits in a scroll view whose height is set here, not by SwiftUI: it is the
-/// answer's own height until the panel reaches its maximum, then it stays put and the
+/// answer's own height until the card reaches its maximum, then it stays put and the
 /// answer scrolls inside, following its newest line.
 struct AskSection: View {
     let ask: AskModel
     let island: IslandModel
-    /// The most height this section may take (see `PanelView.askRoom`).
+    /// The most height this section may take, less its bottom padding (see
+    /// `CapsuleView.askRoom`).
     let room: CGFloat
     var isRehearsal = false
+
+    /// Space under the card's last line.
+    static let bottomPadding: CGFloat = 16
 
     /// The answer's natural height, and where the scroll view starts in this section.
     @State private var contentHeight: CGFloat = 0
@@ -27,48 +32,77 @@ struct AskSection: View {
 
     private var overflows: Bool { contentHeight > viewport + 0.5 }
 
+    /// A question was asked, or asking failed: the capsule is a card.
+    private var isCard: Bool { ask.question != nil || ask.errorMessage != nil }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            hint
-            if let message = ask.errorMessage {
-                Label(message, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.orange)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 10)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+            Rectangle()
+                .fill(.white.opacity(0.16))
+                .frame(height: 1)
+                .padding(.horizontal, 20)
+                .opacity(isCard ? 1 : 0)
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                if let message = ask.errorMessage {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(CapsuleStyle.warning)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, ask.question == nil ? 0 : 10)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+                answerScroll
+                    .padding(.top, ask.question == nil ? 0 : 10)
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(Self.sectionSpace)).minY } action: {
+                        scrollTop = $0
+                    }
             }
-            turn
+            .padding(.horizontal, 22)
+            .padding(.top, isCard ? 13 : 0)
+            .padding(.bottom, isCard ? Self.bottomPadding : 0)
         }
+        // Nothing asked: no height at all. (The scroll view inside stays built, at zero
+        // height: building a new one for every question costs frames.)
+        .frame(height: isCard ? nil : 0, alignment: .top)
+        .clipped()
         .frame(maxWidth: .infinity, alignment: .leading)
         .coordinateSpace(.named(Self.sectionSpace))
     }
 
-    // MARK: Hint
+    // MARK: Header
 
-    private var hintText: String {
-        switch ask.phase {
-        case .waiting, .answering: "Answering · Esc stops"
-        case .idle: "Return asks · Esc closes"
-        case .done: ask.conversationID == nil ? "Return asks · Esc closes" : "Return asks a follow-up"
-        }
-    }
-
-    private var hint: some View {
-        HStack(spacing: 6) {
-            Text(hintText)
-                .contentTransition(.opacity)
-                .animation(.easeOut(duration: 0.15), value: hintText)
-            Spacer(minLength: 8)
-            if ask.question != nil {
+    /// The question, small and dimmed: it is context now. Beside it, "New" (⌘N).
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            if let question = ask.question {
+                Text(question)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(CapsuleStyle.secondary))
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .accessibilityLabel("You asked: \(question)")
+                    .id(ask.turnID)
+                    .transition(IslandContentTransition(motion: island.motion))
+            } else {
+                Spacer(minLength: 0)
+            }
+            if isCard {
                 Button(action: ask.newQuestion) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "plus.bubble")
-                        Text("New question")
-                        Text("⌘N").foregroundStyle(.white.opacity(0.3))
+                    HStack(spacing: 4) {
+                        Text("New")
+                        Text("⌘N").foregroundStyle(.white.opacity(0.4))
                     }
-                    .contentShape(Rectangle())
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .padding(.horizontal, 8)
+                    .frame(height: 20)
+                    .background(Capsule().fill(.white.opacity(CapsuleStyle.controlFill)))
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
@@ -78,38 +112,10 @@ struct AskSection: View {
                 .transition(.opacity)
             }
         }
-        .font(.system(size: 12))
-        .foregroundStyle(.white.opacity(0.5))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: One turn
-
-    /// The question and its answer. The scroll view stays alive between turns (at zero
-    /// height when there is none): building a new one for every question costs frames.
-    /// What is inside it cross-fades from one turn to the next instead.
-    private var turn: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let question = ask.question {
-                // The question, moved up out of the box and dimmed: it is context now.
-                Text(question)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.45))
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                    .accessibilityLabel("You asked: \(question)")
-                    .id(ask.turnID)
-                    .transition(IslandContentTransition(motion: island.motion))
-            }
-            answerScroll
-                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(Self.sectionSpace)).minY } action: {
-                    scrollTop = $0
-                }
-        }
-        .padding(.top, ask.question == nil ? 0 : 16)
-    }
 
     private var answerScroll: some View {
         ScrollViewReader { proxy in
@@ -134,8 +140,7 @@ struct AskSection: View {
             .scrollDisabled(!overflows)
             .frame(height: ask.question == nil ? 0 : viewport, alignment: .top)
             // Drawn over the edges, not as a mask: a SwiftUI scroll view on the Mac is an
-            // AppKit scroll view inside, and a mask does not reach it. On true black, a
-            // black-to-clear gradient on top looks exactly like a faded edge.
+            // AppKit scroll view inside, and a mask does not reach it.
             .overlay { EdgeFade(scroll: scroll, contentHeight: contentHeight, viewport: viewport, active: overflows) }
             .onChange(of: contentHeight) { _, _ in
                 guard scroll.following, overflows, ask.phase != .done else { return }
@@ -528,8 +533,10 @@ private final class AnswerScrollState {
     @ObservationIgnored var autoScrollUntil: CFTimeInterval = 0
 }
 
-/// Soft edges where the answer scrolls under them: black to clear, nothing else. Each
-/// edge shows only when there is more answer beyond it, and grows with the distance.
+/// Soft edges where the answer scrolls under them: a faint shade, nothing else. Each edge
+/// shows only when there is more answer beyond it, and grows with the distance. On the
+/// dark glass a light shade of black reads as the text passing under the edge, without
+/// painting a black band that the glass would show.
 private struct EdgeFade: View {
     let scroll: AnswerScrollState
     let contentHeight: CGFloat
@@ -539,16 +546,17 @@ private struct EdgeFade: View {
     var body: some View {
         let top = active ? min(max(-scroll.offset / 18, 0), 1) : 0
         let bottom = active ? min(max((contentHeight + scroll.offset - viewport) / 18, 0), 1) : 0
+        let shade = Color.black.opacity(0.35)
         VStack(spacing: 0) {
-            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                .frame(height: 22)
+            LinearGradient(colors: [shade, .clear], startPoint: .top, endPoint: .bottom)
+                .frame(height: 18)
                 .opacity(top)
             Spacer(minLength: 0)
-            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                .frame(height: 22)
+            LinearGradient(colors: [.clear, shade], startPoint: .top, endPoint: .bottom)
+                .frame(height: 18)
                 .opacity(bottom)
         }
+        .padding(.horizontal, -22)  // edge to edge across the card
         .allowsHitTesting(false)
     }
 }
-

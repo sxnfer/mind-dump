@@ -107,7 +107,7 @@ final class AnswerReveal {
         startTicking()
     }
 
-    /// Show a whole text at once, with no flow (a reopened panel, a restored answer).
+    /// Show a whole text at once, with no flow (a reopened capsule, a restored answer).
     func show(_ text: String) {
         stop()
         received = Array(text)
@@ -118,12 +118,12 @@ final class AnswerReveal {
         freezeAll()
     }
 
-    /// Stop pouring, and leave the text as it is (the panel is closing).
+    /// Stop pouring, and leave the text as it is (the capsule is closing).
     func pause() {
         stop()
     }
 
-    /// Let everything out now (the panel is closing; there is no one to pour for).
+    /// Let everything out now (the capsule is closing; there is no one to pour for).
     func flush() {
         guard running || revealed < received.count else { return }
         revealed = received.count

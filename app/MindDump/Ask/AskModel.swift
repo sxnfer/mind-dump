@@ -3,7 +3,7 @@ import Observation
 import SwiftUI
 
 /// Ask mode: one question, a streamed answer with numbered references, then its sources.
-/// The panel shows the latest question and answer; a follow-up continues the same
+/// The capsule shows the latest question and answer; a follow-up continues the same
 /// conversation on the backend. The view only draws this; it holds no logic.
 @MainActor
 @Observable
@@ -66,10 +66,10 @@ final class AskModel {
     /// Source rows that are open (showing their passage).
     private(set) var expanded: Set<Int> = []
     /// Bumps when a click in the answer (a source row, New question) should hand the
-    /// keyboard back to the box: a click inside the panel takes it away otherwise, and
+    /// keyboard back to the box: a click inside the capsule takes it away otherwise, and
     /// the next question would be typed into nothing.
     private(set) var focusRequests = 0
-    /// The sources came in once already: a reopened panel shows them without the stagger.
+    /// The sources came in once already: a reopened capsule shows them without the stagger.
     @ObservationIgnored var sourcesHaveEntered = false
 
     /// The next Return continues this conversation.
@@ -96,7 +96,7 @@ final class AskModel {
     /// before the first characters show, so the two changes land in different frames.
     ///
     /// No `withAnimation` here or anywhere on the stream's path: an animated change made
-    /// outside SwiftUI's own update forces it to lay out the whole panel there and then,
+    /// outside SwiftUI's own update forces it to lay out the whole capsule there and then,
     /// a second time in the same frame (measured: 15 to 25 ms, two dropped frames). The
     /// status line's removal carries its own animation instead.
     private func hideStatus() {
@@ -108,11 +108,11 @@ final class AskModel {
 
     func submit() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Only an open panel asks: keys that reach a hidden panel (a script's posted
+        // Only an open capsule asks: keys that reach a hidden capsule (a script's posted
         // events, a stray Return) must not send a question nobody can see.
-        guard island.presentation.isPanel, !text.isEmpty, !isBusy else { return }
+        guard island.presentation.isOpen, !text.isEmpty, !isBusy else { return }
         let conversation = conversationID
-        island.panelContentWillChange("ask")
+        island.capsuleContentWillChange("ask")
         withAnimation(contentSpring) {
             draft = ""
             errorMessage = nil
@@ -127,6 +127,7 @@ final class AskModel {
             reveal.reset()
         }
         sourcesHaveEntered = false
+        island.growsInSteps = true
         onStream?("stream")
         task = Task { [weak self, source] in
             do {
@@ -143,14 +144,14 @@ final class AskModel {
 
     /// "New question" (or ⌘N): forget the conversation and start clean.
     func newQuestion() {
-        guard island.presentation.isPanel else { return }  // see `submit`
+        guard island.presentation.isOpen else { return }  // see `submit`
         guard question != nil || errorMessage != nil else {
             draft = ""  // nothing asked yet: a clean box is all "new" can mean
             return
         }
         task?.cancel()
         task = nil
-        island.panelContentWillChange("new-question")
+        island.capsuleContentWillChange("new-question")
         withAnimation(contentSpring) {
             draft = ""
             question = nil
@@ -167,13 +168,14 @@ final class AskModel {
         }
         lastTurn = nil
         focusRequests += 1
+        island.growsInSteps = false
         onStream?(nil)
     }
 
     /// Open or close one source's passage.
     func toggle(_ source: Source) {
         focusRequests += 1
-        island.panelContentWillChange("source-expand")
+        island.capsuleContentWillChange("source-expand")
         // Plain assignment; the list animates the change itself (`SourcesList`). An
         // animated change made from out here left the scroll view's geometry stale,
         // so the row could not be scrolled into view.
@@ -190,14 +192,14 @@ final class AskModel {
         NSWorkspace.shared.open(url)
     }
 
-    /// The panel is about to close. An answer still on its way is cancelled: the
+    /// The capsule is about to close. An answer still on its way is cancelled: the
     /// backend saves nothing unless it sends "final", so the conversation is as it was.
     /// The question goes back in the box, one Return from asking again.
     ///
     /// This runs before the collapse starts, and changes nothing on screen then: the
-    /// text stops flowing (no new characters while the panel blurs out), and everything
+    /// text stops flowing (no new characters while the capsule blurs out), and everything
     /// that moves layout (restoring the last answer, or showing the rest of a finished
-    /// one) waits until the panel has faded out. Doing it in the collapse's first frame
+    /// one) waits until the capsule has faded out. Doing it in the collapse's first frame
     /// made that frame 13 to 38 ms late.
     func panelWillClose() {
         guard isBusy else { return }
@@ -260,18 +262,20 @@ final class AskModel {
         guard let answer, let question else { return }
         lastTurn = (question, answer)
         onStream?(nil)
-        island.panelContentWillChange("sources")
+        island.capsuleContentWillChange("sources")
         // Plain assignment: each row brings itself in (`Entrance`), the notices fade in
         // on their own, and the body follows the new height on its spring.
         sources = answer.grounded ? Self.numbered(answer.citations, by: reveal.references) : []
         phase = .done
+        island.growsInSteps = false
     }
 
     private func fail(_ error: Error) {
         task = nil
+        island.growsInSteps = false
         onStream?(nil)
         let message = error.localizedDescription
-        island.panelContentWillChange("ask-error")
+        island.capsuleContentWillChange("ask-error")
         withAnimation(contentSpring) {
             status = nil
             if draft.isEmpty, let question { draft = question }
@@ -289,6 +293,7 @@ final class AskModel {
     }
 
     private func restoreLastTurn() {
+        island.growsInSteps = false
         status = nil
         partialFailed = false
         turnID += 1
@@ -323,7 +328,7 @@ final class AskModel {
         return sources.sorted { $0.number < $1.number }
     }
 
-    /// In-panel changes (a new turn, sources, an open row) ride the island's resize spring.
+    /// Changes inside the capsule (a new turn, sources, an open row) ride the island's resize spring.
     private var contentSpring: Animation {
         island.reduceMotion ? IslandMotion.reduced.body : IslandMotion.resize.body
     }

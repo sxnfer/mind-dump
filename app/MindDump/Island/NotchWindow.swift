@@ -14,15 +14,12 @@ import SwiftUI
 /// 2. `level` above the main menu: it can cover the menu bar, where the notch is.
 /// 3. `collectionBehavior`: it shows on every Space and over fullscreen apps.
 final class NotchWindow: NSPanel {
-    /// Big enough for the open panel, its shoulders and its shadow.
-    private static let size = NSSize(
-        width: IslandLayout.panelWidth + 2 * (IslandLayout.shadowRoom + 12),
-        height: IslandLayout.maxPanelHeight + IslandLayout.shadowRoom
-    )
+    /// Big enough for the widest pill, the tallest card and their shadows.
+    private static let size = NSSize(width: IslandLayout.windowSize.width, height: IslandLayout.windowSize.height)
 
-    /// Only an open panel takes keystrokes; a closed island never steals them.
+    /// Only the open capsule takes keystrokes; a closed island never steals them.
     var takesKeyboard = false {
-        // An open panel is not a drop target: its text box takes drops its own way.
+        // The open capsule is not a drop target: its text box takes drops its own way.
         didSet { hosting?.takesDrops = !takesKeyboard }
     }
 
@@ -106,6 +103,14 @@ final class NotchWindow: NSPanel {
             width: metrics.width, height: metrics.height
         )
     }
+
+    /// Where the glass capsule sits on screen (centred, `top` below the screen's top edge).
+    func capsuleRect(for capsule: CapsuleMetrics) -> NSRect {
+        NSRect(
+            x: screenFrame.midX - capsule.width / 2, y: screenFrame.maxY - capsule.top - capsule.height,
+            width: capsule.width, height: capsule.height
+        )
+    }
 }
 
 /// What a closed island accepts as a drop: plain text, and links from a browser. Files and
@@ -121,11 +126,11 @@ private protocol DropHosting: AnyObject {
 /// The window's SwiftUI host, with a drop catcher kept in front of everything in it.
 ///
 /// Why a catcher of our own, in front: AppKit gives a drop to the front-most view under the
-/// pointer that registered for its types. The panel's text box stays focused while the
-/// panel is closed (taking focus again on every open cost a late frame), so its text
-/// editor stays in the window, hidden, right where the drop target opens, and it takes
-/// text. A view in front of it wins. While the panel is open, nothing here takes drops,
-/// so the box behaves as macOS made it.
+/// pointer that registered for its types. The capsule's text box stays focused while the
+/// capsule is closed (taking focus again on every open cost a late frame), so its text
+/// editor stays in the window, hidden, right where the drop target comes out, and it
+/// takes text. A view in front of it wins. While the capsule is open, nothing here takes
+/// drops, so the box behaves as macOS made it.
 ///
 /// The host registers too, in case AppKit asks `hitTest` (the catcher answers nil there,
 /// so clicks pass through to SwiftUI). Both forward to the same receiver.

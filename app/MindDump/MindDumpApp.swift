@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Entry point. The app has no normal windows and no Dock icon (LSUIElement):
-/// it lives in the notch panel that AppDelegate creates.
+/// it lives in the window at the notch that AppDelegate creates.
 @main
 struct MindDumpApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
