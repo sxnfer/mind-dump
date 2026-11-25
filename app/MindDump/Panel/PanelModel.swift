@@ -49,11 +49,13 @@ final class PanelModel {
 
     /// A drop that could not be saved: open in Capture with its words in the box and the
     /// reason under them. The capsule is closed here, so the mode changes without a slide.
+    /// The app opens it, not the user, so it waits without the keyboard until clicked: the
+    /// user may be typing in another app by now.
     func openCapture(keeping text: String, error: String) {
         guard !island.presentation.isOpen else { return }
         mode = .capture
         capture.keepForRetry(text, error: error)
-        island.open()
+        island.open(by: .system)
     }
 
     /// Built once at launch, out of sight, in Ask mode with a finished answer.

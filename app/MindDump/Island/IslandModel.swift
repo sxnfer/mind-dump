@@ -36,6 +36,20 @@ struct DropTarget: Equatable {
     var isSaving = false
 }
 
+/// Who opened the capsule. It decides whether the capsule takes the keyboard.
+///
+/// The window is a non-activating panel: it can take the keyboard from whatever app the
+/// user is in without that app noticing. That is right when the user asked for the
+/// capsule, and wrong when it opened by itself (a failed drop): then the user's typing,
+/// meant for their own app, would land in the box, and a Return would save it.
+enum OpenReason: String {
+    /// A click on the notch (and, later, the global shortcut): the keyboard comes along.
+    case user
+    /// The app opened it (a drop that could not be saved): it waits, unfocused, until the
+    /// user clicks it.
+    case system
+}
+
 /// What the island is showing. The view draws this; it holds no logic.
 ///
 /// The first three are the black body at the notch. The last two bring out the glass
@@ -119,8 +133,16 @@ final class IslandModel {
         }
     }
 
-    /// The window listens: an open capsule takes the keyboard, anything else gives it back.
-    var onOpenChange: ((Bool) -> Void)?
+    /// Why the open capsule is open; nil while it is closed. A capsule the app opened
+    /// becomes `.user` when the user clicks it (`claim`).
+    private(set) var openedBy: OpenReason?
+    /// The capsule should have the keyboard: it is open, and the user gave it the keyboard.
+    /// Closed, a pill, a peek or a drop target never has it.
+    var hasKeyboard: Bool { presentation.isOpen && openedBy == .user }
+
+    /// The window listens: `open` says whether the capsule is out (a closed island takes
+    /// drops, an open one does not), `keyboard` whether it should hold the keyboard.
+    var onOpenChange: ((_ open: Bool, _ keyboard: Bool) -> Void)?
     /// Called just before the capsule starts to close, before the collapse is applied, so
     /// work that would land in the collapse's first frame can be stopped first.
     var onWillClose: (() -> Void)?
@@ -175,15 +197,39 @@ final class IslandModel {
 
     /// A click on the notch.
     func toggle() {
-        presentation.isOpen ? close() : open()
+        presentation.isOpen ? close() : openByUser()
     }
 
-    func open() {
+    /// The user asked for the capsule (a click on the notch; the global shortcut will call
+    /// this too): it opens with the keyboard.
+    func openByUser() {
+        open(by: .user)
+    }
+
+    func open(by reason: OpenReason) {
         guard !presentation.isOpen else { return }
         parked = nil
         dropReleased = false
+        openedBy = reason
         NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
-        go(.open, with: .open, name: "open")
+        go(.open, with: .open, name: reason == .user ? "open" : "open-waiting")
+    }
+
+    /// The user clicked a capsule that opened by itself: from now on it is theirs, with the
+    /// keyboard, and closes by the normal rules.
+    func claim() {
+        guard presentation.isOpen, openedBy == .system else { return }
+        openedBy = .user
+        onOpenChange?(true, true)
+    }
+
+    /// The window lost the keyboard while the capsule held it: another app became active,
+    /// or another window took the keyboard. The user has moved on, so it closes, exactly as
+    /// a click elsewhere does. Our own close also makes the window give the keyboard up;
+    /// by then the capsule is no longer open, so this does nothing (no loop).
+    func keyboardTaken() {
+        guard hasKeyboard else { return }
+        close()
     }
 
     /// Close with nothing to report: the capsule goes back into the notch (and the body
@@ -396,7 +442,8 @@ final class IslandModel {
             self.metrics = metrics
             self.capsule = capsule
         }
-        if next.isOpen != wasOpen { onOpenChange?(next.isOpen) }
+        if !next.isOpen { openedBy = nil }
+        if next.isOpen != wasOpen { onOpenChange?(next.isOpen, hasKeyboard) }
         onTransition?(name)
     }
 

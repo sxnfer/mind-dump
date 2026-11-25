@@ -85,8 +85,11 @@ final class PointerTracker {
         hotZone.contains(point)
     }
 
+    /// Only a capsule the user is using closes this way. One that opened by itself and is
+    /// waiting to be clicked stays: that click belonged to the other app, and closing would
+    /// throw away the words it is keeping.
     func clickedElsewhere() {
-        guard island.presentation.isOpen, !hotZone.contains(pointer) else { return }
+        guard island.hasKeyboard, !hotZone.contains(pointer) else { return }
         island.close()
     }
 
