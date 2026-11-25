@@ -104,7 +104,7 @@ struct IslandView: View {
             Button(action: island.toggle) { Color.clear.contentShape(Rectangle()) }
                 .buttonStyle(IslandPressStyle(island: island))
                 .accessibilityLabel(island.presentation.isOpen ? "Close Mind Dump" : "Open Mind Dump")
-                .help(island.presentation.isOpen ? "Close" : "Save a note or link")
+                .help(island.presentation.isOpen ? "Close (⌥⇧Space)" : "Save a note or link (⌥⇧Space)")
         }
     }
 
