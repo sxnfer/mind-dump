@@ -48,12 +48,12 @@ Read each row in this order: what breaks without a solution, then the options, t
 | D11 | Live status | Polling, for the one item just saved: after a save the app asks `GET /items/{id}` every 0.5 s until it is ready or failed | A few small requests for a few seconds; no new endpoint and no open connection. Switch to Server-Sent Events when the island shows several items or upload progress. Decided 2026-11-25 by Claude under San's delegation; San to review. See `docs/decisions/D11-live-status.md`. |
 | D40 | CI gate (checks before merge) | Branch must be up to date with `main`; `uv lock --check`; migrations twice on an empty database; gitleaks (SHA-256-pinned binary) on the PR's commits; `uv audit` and Grype (digest-pinned) block only when a fix exists (image: high or critical); a nightly run without that filter emails San; every action pinned to a commit hash | Not recorded yet; San to add. Decided by San 2026-11-25. See `docs/decisions/D40-ci-gate.md`. |
 | D41 | Panel layout and macOS floor | Layout C: one Liquid Glass capsule under the notch that grows into a card for an answer; the notch stays black; deployment target macOS 26.0; replaces the old panel | Fewest parts; the glass morphing API fits it; one platform floor means one code path. Decided by San on 2026-11-25 from six drawn layouts. See `docs/decisions/D41-liquid-glass-panel.md`. |
+| D23 | Global shortcut | macOS hot key API (`RegisterEventHotKey`), Option-Shift-Space by default: opens the capsule from any app, pressed again closes it | No permission prompt, and the app never sees other keys; a key event monitor would need Accessibility and see all typing. Decided by San on 2026-11-25. See `docs/decisions/D23-global-shortcut.md`. |
 
 ## Open
 
 | # | Decision | Problem it solves | Options to compare | Lean and why | Needed by |
 | --- | --- | --- | --- | --- | --- |
-| D23 | Global shortcut | Open the panel from any app | macOS hot key API, a key event monitor (needs Accessibility permission) | Hot key API. No extra permission prompt. | M6 |
 | D12 | Who is the user | Only the owner reaches the API | A local token in the settings file, a hosted identity provider | Local token. One owner per copy. | M9 |
 | D15 | Cloud and IaC | Repeatable cloud setup for your demo | Terraform on Azure, Bicep | Terraform on Azure. Matches the CarbonAI role. | M7 |
 | D16 | Observability | See errors, speed and cost | Structured logs, OpenTelemetry, Application Insights | Structured logs first, then OpenTelemetry into Application Insights. | M8 |
