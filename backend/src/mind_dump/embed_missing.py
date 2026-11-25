@@ -6,9 +6,10 @@
 In Docker:  docker compose exec worker python -m mind_dump.embed_missing
 
 When to run it (D8):
-- after setting VOYAGE_API_KEY: chunks saved without a key have no vectors;
-- after changing EMBEDDING_MODEL: vectors from two models can't be compared, so every
-  chunk made by the old model is embedded again.
+- after setting the embedding key (OPENAI_API_KEY, or VOYAGE_API_KEY with
+  EMBEDDING_PROVIDER=voyage): chunks saved without a key have no vectors;
+- after changing EMBEDDING_MODEL or EMBEDDING_PROVIDER: vectors from two models can't
+  be compared, so every chunk made by the old model is embedded again.
 
 The command itself uses no network: it only queues jobs. An `embed` job fetches nothing
 and re-chunks nothing when the text is unchanged; the worker embeds the rows in place,
@@ -24,6 +25,7 @@ from psycopg.rows import dict_row
 
 from mind_dump import jobs
 from mind_dump.config import load_settings
+from mind_dump.embeddings import no_embedder_reason
 
 _BEHIND = """
 SELECT item_id, count(*) AS chunks
@@ -51,10 +53,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{total} chunk(s) in {len(behind)} item(s) have no vector from {model}")
         if not behind or args.dry_run:
             return 0
-        if settings.voyage_api_key is None:
+        if settings.embedding_api_key is None:
             print(
-                "VOYAGE_API_KEY is not set, so the worker can't embed them. "
-                "Set it in .env, restart the worker, and run this again."
+                f"{no_embedder_reason(settings)}, so the worker can't embed them. "
+                f"Set {settings.embedding.key_setting} in .env, restart the worker, "
+                "and run this again."
             )
             return 1
         queued = 0

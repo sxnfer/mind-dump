@@ -131,7 +131,7 @@ erDiagram
     model_usage {
         bigint      id PK "identity"
         timestamptz created_at
-        text        provider "anthropic | voyage | fake"
+        text        provider "anthropic | openai | voyage | fake"
         text        model "the model that served the call"
         text        purpose "answer | judge | describe | check | embed_documents | embed_query"
         integer     input_tokens

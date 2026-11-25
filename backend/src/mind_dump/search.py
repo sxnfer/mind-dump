@@ -286,9 +286,7 @@ class SearchUnavailable(Exception):
     """Vector mode can't run: no embedding model is configured, or it failed."""
 
 
-NO_EMBEDDER = (
-    "Search by meaning needs an embedding model, and none is configured (VOYAGE_API_KEY is not set)"
-)
+NO_EMBEDDER = "Search by meaning needs an embedding model, and none is configured"
 
 
 def _hits(conn: Conn, fused: list[Fused], keyword: list[Ranked], vector: list[Ranked]) -> list[Hit]:
@@ -325,8 +323,11 @@ def search(
     filters: Filters | None = None,
     limit: int = DEFAULT_LIMIT,
     embedder: Embedder | None = None,
+    no_embedder: str | None = None,
 ) -> SearchResult:
     """Run one search. Raises SearchUnavailable only in vector mode; hybrid degrades.
+    no_embedder says why there is no embedder, naming the key to set
+    (embeddings.no_embedder_reason), for the notice and the error.
 
     The query is embedded first (a network call, D8), before any SQL runs, so a slow
     model never holds a transaction open.
@@ -340,7 +341,8 @@ def search(
     if mode in ("vector", "hybrid"):
         try:
             if embedder is None:
-                raise SearchUnavailable(NO_EMBEDDER)
+                reason = f" ({no_embedder})" if no_embedder else ""
+                raise SearchUnavailable(NO_EMBEDDER + reason)
             try:
                 query_vector = embedder.embed_query(query)
             except (TemporaryError, PermanentError) as exc:

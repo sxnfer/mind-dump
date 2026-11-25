@@ -32,8 +32,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     def record(usage: Usage) -> int:
         return app.state.usage(usage)
 
-    # D8, D37: embeds search queries. None without VOYAGE_API_KEY: search falls back to
-    # keyword results (hybrid) or answers 503 (vector).
+    # D8, D37: embeds search queries. None without the EMBEDDING_PROVIDER's key
+    # (OPENAI_API_KEY by default): search falls back to keyword results (hybrid) or
+    # answers 503 (vector), naming that key.
     app.state.embedder = create_embedder(settings, on_usage=record)
     # D9: Claude answers questions. None without ANTHROPIC_API_KEY: asking answers 503.
     app.state.llm = create_llm(settings)

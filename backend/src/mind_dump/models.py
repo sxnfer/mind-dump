@@ -102,7 +102,7 @@ class Chunk(BaseModel):
     end_char: int
     text: str
     page: int | None = None  # PDFs: the 1-based page it sits on (chunks never cross pages)
-    embedded: bool = False  # has a vector (D8); False while no VOYAGE_API_KEY is set
+    embedded: bool = False  # has a vector (D8); False while no embedding key is set
     embedding_model: str | None = None  # which model made the vector
 
 

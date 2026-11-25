@@ -123,7 +123,7 @@ jobs:
           curl --fail -sS "localhost:8000/items/$id/chunks" | tee /tmp/chunks.json
           python3 -c 'import json; c = json.load(open("/tmp/chunks.json")); assert len(c) >= 1, c'
 
-          # M4: search finds the note by its words. No VOYAGE_API_KEY, so hybrid falls
+          # M4: search finds the note by its words. No OPENAI_API_KEY, so hybrid falls
           # back to keyword results and says so (D37).
           curl --fail -sS "localhost:8000/search?q=smoke" | tee /tmp/search.json
           python3 -c 'import json; r = json.load(open("/tmp/search.json")); assert r["mode"] == "keyword" and r["degraded"] and r["hits"], r'

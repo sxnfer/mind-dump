@@ -157,7 +157,7 @@ def test_after_the_worker_runs_the_item_is_ready_with_chunks(
             "end_char": 35,
             "text": "First paragraph.\n\nSecond paragraph.",
             "page": None,  # notes have no pages
-            "embedded": False,  # this worker has no embedder (no VOYAGE_API_KEY)
+            "embedded": False,  # this worker has no embedder (no OPENAI_API_KEY)
             "embedding_model": None,
         }
     ]

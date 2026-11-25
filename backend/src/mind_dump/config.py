@@ -5,7 +5,7 @@ Compose fills them from `.env` (git-ignored). Code never holds a secret.
 
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -15,8 +15,27 @@ _DEFAULT_MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
 # <repo>/data, when running from a checkout. The Docker image sets STORAGE_DIR=/data (a volume).
 _DEFAULT_STORAGE_DIR = Path(__file__).resolve().parents[3] / "data"
 
-DEFAULT_EMBEDDING_MODEL = "voyage-4"  # D8
 DEFAULT_LLM_MODEL = "claude-opus-5-5"  # D8
+
+
+@dataclass(frozen=True)
+class EmbeddingProvider:
+    """One embedding API (D8): the setting that holds its key, and its default model."""
+
+    name: str  # the value of EMBEDDING_PROVIDER, and model_usage.provider
+    label: str  # for messages
+    key_setting: str
+    default_model: str
+
+
+# D8: OpenAI by San's decision (2026-11-25); Voyage stays selectable behind the same
+# Embedder interface. Both give 1,024-dimension vectors, so no migration either way.
+EMBEDDING_PROVIDERS: dict[str, EmbeddingProvider] = {
+    "openai": EmbeddingProvider("openai", "OpenAI", "OPENAI_API_KEY", "text-embedding-3-small"),
+    "voyage": EmbeddingProvider("voyage", "Voyage AI", "VOYAGE_API_KEY", "voyage-4"),
+}
+DEFAULT_EMBEDDING_PROVIDER = "openai"
+DEFAULT_EMBEDDING_MODEL = EMBEDDING_PROVIDERS[DEFAULT_EMBEDDING_PROVIDER].default_model
 
 
 @dataclass(frozen=True)
@@ -46,10 +65,21 @@ DEFAULT_MODEL_PRICES: dict[str, Price] = {
     "claude-haiku-5-5": _price("0.10", "0.50", "0.125", "0.01"),
     "claude-fable-5-1": _price("10", "50", "12.50", "0.25"),
 }
-# Voyage AI's list price for voyage-4, in US dollars per million tokens (checked on
-# 2026-11-25 at docs.voyageai.com/docs/pricing; the first 200 million tokens are free).
-# Set VOYAGE_PRICE_PER_MTOK if EMBEDDING_MODEL changes: voyage-4-large is 0.12, -lite 0.02.
-DEFAULT_VOYAGE_PRICE_PER_MTOK = "0.06"
+# D39: embedding prices, US dollars per million input tokens. EMBEDDING_PRICE_PER_MTOK,
+# when set, replaces them for every embedding call.
+# - voyage-4: Voyage AI's list price, checked on 2026-11-25 at
+#   docs.voyageai.com/docs/pricing (the first 200 million tokens are free).
+# - text-embedding-3-small and -large: DERIVED, not read from a price list. OpenAI's
+#   embeddings guide gives "pages per dollar" at about 800 tokens a page: 62,500 pages
+#   (small) and 9,615 pages (large), which is about $0.02 and $0.13 per million tokens.
+#   Check them against OpenAI's pricing page.
+# An embedding model in neither this table nor the setting is priced at the dearest
+# entry here, so the estimate errs toward the cap instead of counting it as free.
+DEFAULT_EMBEDDING_PRICES: dict[str, Decimal] = {
+    "voyage-4": Decimal("0.06"),
+    "text-embedding-3-small": Decimal("0.02"),
+    "text-embedding-3-large": Decimal("0.13"),
+}
 
 
 @dataclass(frozen=True)
@@ -60,12 +90,15 @@ class Settings:
     pool_max_size: int = 10
     storage_backend: str = "local"  # D5: "local" now, "azure" in P6
     storage_dir: Path = _DEFAULT_STORAGE_DIR
-    # D8: the owner's model keys. Both are optional: without VOYAGE_API_KEY chunks are
-    # saved with no vectors; without ANTHROPIC_API_KEY images can't be described.
-    # repr=False: a logged or printed Settings never shows a key.
+    # D8: the owner's model keys. All optional: without the configured embedding
+    # provider's key (OPENAI_API_KEY by default) chunks are saved with no vectors;
+    # without ANTHROPIC_API_KEY images can't be described. Only the configured
+    # provider's key counts. repr=False: a logged or printed Settings never shows a key.
+    embedding_provider: str = DEFAULT_EMBEDDING_PROVIDER  # openai or voyage
+    openai_api_key: str | None = field(default=None, repr=False)
     voyage_api_key: str | None = field(default=None, repr=False)
     anthropic_api_key: str | None = field(default=None, repr=False)
-    embedding_model: str = DEFAULT_EMBEDDING_MODEL
+    embedding_model: str = ""  # empty: the provider's default (see __post_init__)
     llm_model: str = DEFAULT_LLM_MODEL
     # M5: answers (D9). Effort is set explicitly: this model's default is medium, and
     # effort is the control for how much it thinks (and costs).
@@ -75,7 +108,32 @@ class Settings:
     daily_cost_cap_usd: Decimal = Decimal("2.00")
     ask_rate_per_minute: int = 10
     model_prices: Mapping[str, Price] = field(default_factory=lambda: dict(DEFAULT_MODEL_PRICES))
-    voyage_price_per_mtok: Decimal = Decimal(DEFAULT_VOYAGE_PRICE_PER_MTOK)
+    embedding_price_per_mtok: Decimal | None = None  # None: DEFAULT_EMBEDDING_PRICES
+
+    def __post_init__(self) -> None:
+        if not self.embedding_model:
+            provider = EMBEDDING_PROVIDERS.get(self.embedding_provider)
+            if provider is not None:
+                object.__setattr__(self, "embedding_model", provider.default_model)
+
+    @property
+    def embedding(self) -> EmbeddingProvider:
+        return EMBEDDING_PROVIDERS[self.embedding_provider]
+
+    @property
+    def embedding_api_key(self) -> str | None:
+        """The configured provider's key; the other provider's key is ignored."""
+        keys = {"openai": self.openai_api_key, "voyage": self.voyage_api_key}
+        return keys[self.embedding_provider]
+
+    def embedding_price(self, model: str) -> Decimal:
+        """D39: EMBEDDING_PRICE_PER_MTOK if set; else the table; else the table's dearest
+        price, so an unknown model errs toward the cap instead of costing nothing."""
+        if self.embedding_price_per_mtok is not None:
+            return self.embedding_price_per_mtok
+        if model in DEFAULT_EMBEDDING_PRICES:
+            return DEFAULT_EMBEDDING_PRICES[model]
+        return max(DEFAULT_EMBEDDING_PRICES.values())
 
 
 def _optional(name: str) -> str | None:
@@ -92,6 +150,39 @@ def _effort(value: str | None) -> str:
     if effort not in EFFORTS:
         raise RuntimeError(f"LLM_EFFORT must be one of {', '.join(EFFORTS)}, not {effort!r}")
     return effort
+
+
+def _provider(value: str | None) -> str:
+    provider = (value or DEFAULT_EMBEDDING_PROVIDER).lower()
+    if provider not in EMBEDDING_PROVIDERS:
+        raise RuntimeError(
+            f"EMBEDDING_PROVIDER must be one of {', '.join(EMBEDDING_PROVIDERS)}, not {value!r}"
+        )
+    return provider
+
+
+def _decimal(name: str, value: str | None) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(value)
+    except ArithmeticError:
+        raise RuntimeError(f"{name} must be a number, not {value!r}") from None
+
+
+def embedding_settings(get: Callable[[str], str | None] = _optional) -> dict:
+    """The embedding settings (D8) as Settings keyword arguments, read through `get`
+    (the environment by default; the evals also read the repo's .env)."""
+    provider = _provider(get("EMBEDDING_PROVIDER"))
+    return {
+        "embedding_provider": provider,
+        "openai_api_key": get("OPENAI_API_KEY"),
+        "voyage_api_key": get("VOYAGE_API_KEY"),
+        "embedding_model": get("EMBEDDING_MODEL") or EMBEDDING_PROVIDERS[provider].default_model,
+        "embedding_price_per_mtok": _decimal(
+            "EMBEDDING_PRICE_PER_MTOK", get("EMBEDDING_PRICE_PER_MTOK")
+        ),
+    }
 
 
 def _prices(value: str | None) -> dict[str, Price]:
@@ -123,16 +214,12 @@ def load_settings() -> Settings:
         pool_max_size=int(os.environ.get("DB_POOL_MAX", "10")),
         storage_backend=os.environ.get("STORAGE_BACKEND", "local"),
         storage_dir=Path(os.environ.get("STORAGE_DIR", _DEFAULT_STORAGE_DIR)),
-        voyage_api_key=_optional("VOYAGE_API_KEY"),
         anthropic_api_key=_optional("ANTHROPIC_API_KEY"),
-        embedding_model=_optional("EMBEDDING_MODEL") or DEFAULT_EMBEDDING_MODEL,
+        **embedding_settings(),
         llm_model=_optional("LLM_MODEL") or DEFAULT_LLM_MODEL,
         llm_effort=_effort(_optional("LLM_EFFORT")),
         agent_max_turns=int(_optional("AGENT_MAX_TURNS") or "6"),
         daily_cost_cap_usd=Decimal(_optional("DAILY_COST_CAP_USD") or "2.00"),
         ask_rate_per_minute=int(_optional("ASK_RATE_PER_MINUTE") or "10"),
         model_prices=_prices(_optional("MODEL_PRICES")),
-        voyage_price_per_mtok=Decimal(
-            _optional("VOYAGE_PRICE_PER_MTOK") or DEFAULT_VOYAGE_PRICE_PER_MTOK
-        ),
     )

@@ -17,7 +17,8 @@ One job, step by step:
      embedding call, except for rows with no vector or a vector from another model,
      which are embedded in place (a key was added, or EMBEDDING_MODEL changed).
    - Otherwise: chunk the text (a PDF page by page, D36) and embed every chunk (D8).
-   With no embedder configured (no VOYAGE_API_KEY), chunks are saved without vectors.
+   With no embedder configured (no key for EMBEDDING_PROVIDER), chunks are saved
+   without vectors.
 5. One transaction (D30): check we still own the job, lock the item, check its text hash
    is still the one we chunked and embedded (if not: a temporary error, and the job runs
    again), write the file's text, replace the chunk set (DELETE, then INSERT, vectors
@@ -56,7 +57,13 @@ from mind_dump import jobs, pages
 from mind_dump.chunking import Chunk, chunk_pages, chunk_text
 from mind_dump.config import load_settings
 from mind_dump.describe import Describer, create_describer
-from mind_dump.embeddings import Embedder, Vector, create_embedder, to_pgvector
+from mind_dump.embeddings import (
+    Embedder,
+    Vector,
+    create_embedder,
+    no_embedder_reason,
+    to_pgvector,
+)
 from mind_dump.errors import PermanentError, TemporaryError
 from mind_dump.extract import extract_text, text_sha256
 from mind_dump.fetcher import PageTooLarge, fetch, make_client
@@ -128,6 +135,7 @@ class Worker:
     extract: pages.Extractor = extract_text
     embedder: Embedder | None = None  # D8: None means chunks keep no vectors
     describer: Describer | None = None  # D7b: None means images can't be described
+    no_embedder: str = "no embedding key set"  # why embedder is None, for the log
     before_commit: Callable[[Job], None] | None = field(default=None)
 
     def run(self, stop: threading.Event, idle: float = IDLE_SLEEP) -> None:
@@ -402,9 +410,10 @@ class Worker:
             )
         if plan.vectors is None and plan.chunks:
             log.info(
-                "item %s: no VOYAGE_API_KEY, so %s chunk(s) saved without vectors; "
-                "set it, then run python -m mind_dump.embed_missing",
+                "item %s: no embedder (%s), so %s chunk(s) saved without vectors; "
+                "set the key, then run python -m mind_dump.embed_missing",
                 item_id,
+                self.no_embedder,
                 len(plan.chunks),
             )
             return f"{len(plan.chunks)} chunk(s) written, no vectors (no embedder)"
@@ -440,7 +449,9 @@ def main() -> int:
         describer = create_describer(settings, recorder)
         log.info(
             "worker started; embeddings: %s; image descriptions: %s",
-            embedder.model if embedder else "off (no VOYAGE_API_KEY): chunks keep no vectors",
+            f"{settings.embedding.label} {embedder.model}"
+            if embedder
+            else f"off ({no_embedder_reason(settings)}): chunks keep no vectors",
             describer.model if describer else "off (no ANTHROPIC_API_KEY): images end in error",
         )
         Worker(
@@ -449,6 +460,7 @@ def main() -> int:
             http=http,
             embedder=embedder,
             describer=describer,
+            no_embedder=no_embedder_reason(settings),
         ).run(stop)
     log.info("worker stopped")
     return 0

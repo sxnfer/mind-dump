@@ -100,7 +100,8 @@ def test_the_command_prints_numbers_and_enforces_the_floor(
     assert code == 0
     written = results.read_text()
     assert "| keyword |" in written
-    assert "| vector | pending |" in written and "VOYAGE_API_KEY" in written
+    assert "| vector | pending |" in written and "OPENAI_API_KEY" in written
+    assert "VOYAGE_API_KEY" not in written
 
 
 def test_results_markdown_with_every_mode() -> None:
@@ -122,3 +123,31 @@ def test_a_miss_says_whether_the_document_came_back(database_url: str) -> None:
     report = harness.run_eval(database_url, ["keyword"], docs=[doc], questions=[found])
     answer = report.mode("keyword").answers[0]
     assert (answer.rank, answer.doc_rank) == (None, 1)
+
+
+def test_pending_rows_and_console_name_the_configured_providers_key(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = harness.Report(documents=1, chunks=2, questions=1, embedding_model=None)
+    when = datetime(2026, 11, 25, tzinfo=UTC)
+    voyage_text = harness.results_markdown(report, "abc1234", when, "VOYAGE_API_KEY")
+    assert "needs a run with `VOYAGE_API_KEY`" in voyage_text
+    assert "OPENAI_API_KEY" not in voyage_text
+
+    lines: list[str] = []
+    code = harness.main(["--database-url", database_url, "--modes", "vector"], out=lines.append)
+    assert code == 2 and "set OPENAI_API_KEY" in lines[-1]  # conftest removed real keys
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "voyage")
+    code = harness.main(["--database-url", database_url, "--modes", "vector"], out=lines.append)
+    assert code == 2 and "set VOYAGE_API_KEY" in lines[-1]
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "nope")
+    code = harness.main(["--database-url", database_url, "--modes", "vector"], out=lines.append)
+    assert code == 2 and "EMBEDDING_PROVIDER must be one of openai, voyage" in lines[-1]
+
+
+def test_tests_never_see_model_keys_from_the_repo_env() -> None:
+    """conftest hides every model setting in .env from the evals: the owner's real keys
+    live there, and an eval test must never reach a model."""
+    from conftest import MODEL_SETTINGS
+
+    assert not set(harness._dotenv()) & set(MODEL_SETTINGS)

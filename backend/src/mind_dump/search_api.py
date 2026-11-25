@@ -10,7 +10,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
-from mind_dump.embeddings import Embedder
+from mind_dump.embeddings import Embedder, no_embedder_reason
 from mind_dump.items import Conn
 from mind_dump.models import SearchHit, SearchItem, SearchResponse
 from mind_dump.search import DEFAULT_LIMIT, MAX_LIMIT, Filters, SearchUnavailable, search
@@ -20,7 +20,7 @@ router = APIRouter(tags=["search"])
 
 
 def get_embedder(request: Request) -> Embedder | None:
-    """Set at startup from VOYAGE_API_KEY (D8); None when it is not set."""
+    """Set at startup from the EMBEDDING_PROVIDER's key (D8); None when it is not set."""
     return getattr(request.app.state, "embedder", None)
 
 
@@ -58,6 +58,7 @@ def _moment(value: str | None, name: str, end_of_day: bool) -> datetime | None:
     },
 )
 def search_chunks(
+    request: Request,
     conn: Conn,
     embedder: EmbedderDep,
     q: Annotated[str, Query(max_length=1000, description="What to look for")],
@@ -104,7 +105,8 @@ def search_chunks(
         item_id=item_id,
     )
     try:
-        result = search(conn, query, mode, filters, limit, embedder)
+        reason = no_embedder_reason(request.app.state.settings)
+        result = search(conn, query, mode, filters, limit, embedder, reason)
     except SearchUnavailable as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from None
     return SearchResponse(

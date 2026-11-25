@@ -4,7 +4,7 @@
 
 **Goal:** find any item by meaning or by exact words, and measure how good the search is.
 **Decisions needed:** none left. (Approved: D37 hybrid search, D20 reranking: none for now.)
-**Status:** built on branch `m4-search`. Keyword numbers (recall@5 0.80) recorded in `docs/results.md`; the vector and hybrid numbers wait for a run with `VOYAGE_API_KEY`.
+**Status:** built on branch `m4-search`. Keyword numbers (recall@5 0.80) recorded in `docs/results.md`; the vector and hybrid numbers wait for a run with an embedding key (`OPENAI_API_KEY` by default).
 **Tasks:**
 - ✅ Keyword search (Postgres full-text) and vector search (pgvector with an HNSW index). *(Migration 010: generated `chunks.text_tsv` + GIN index, HNSW index on `chunks.embedding`. `search.py`: `websearch_to_tsquery`, all words first, then any word, ranked by `ts_rank` (quotes or `-word`: exact); cosine distance with the query embedded as `query` (D8).)*
 - ✅ Merge the two result lists into one (hybrid search). *(Reciprocal Rank Fusion, `1 / (60 + rank)`, D37. Each hit shows its rank in each list and the merged score.)*

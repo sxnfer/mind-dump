@@ -36,7 +36,7 @@ from psycopg.rows import DictRow
 
 from mind_dump import search as search_mod
 from mind_dump.config import Settings
-from mind_dump.embeddings import Embedder
+from mind_dump.embeddings import Embedder, no_embedder_reason
 from mind_dump.errors import PermanentError
 from mind_dump.llm import LLM, ModelTurn, TurnRequest
 from mind_dump.tags import normalise_tag
@@ -277,7 +277,15 @@ def tool_search(conn: Conn, args: dict, ctx: Context) -> tuple[dict, dict[int, d
     if len(query) > MAX_QUERY:
         raise ToolError(f"query must be at most {MAX_QUERY} characters")
     filters, notice = _search_filters(args, ctx)
-    result = search_mod.search(conn, query.strip(), "hybrid", filters, SEARCH_RESULTS, ctx.embedder)
+    result = search_mod.search(
+        conn,
+        query.strip(),
+        "hybrid",
+        filters,
+        SEARCH_RESULTS,
+        ctx.embedder,
+        no_embedder_reason(ctx.settings),
+    )
     found = {h.chunk_id: snapshot(h) for h in result.hits}
     out: dict = {
         "results": [

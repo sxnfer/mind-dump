@@ -8,6 +8,7 @@ the real worker.
 
 import math
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from fractions import Fraction
 
@@ -113,20 +114,20 @@ def ids(result) -> list[int]:
 
 
 class FailingEmbedder:
-    """Embeds nothing: every query call fails the way a 503 from Voyage does (D35)."""
+    """Embeds nothing: every query call fails the way a 503 from OpenAI does (D35)."""
 
     model = MODEL
 
     def embed_documents(self, texts: list[str]) -> list[Vector]:
-        raise TemporaryError("Voyage AI answered HTTP 503 Service Unavailable")
+        raise TemporaryError("OpenAI answered HTTP 503 Service Unavailable")
 
     def embed_query(self, text: str) -> Vector:
-        raise TemporaryError("Voyage AI answered HTTP 503 Service Unavailable")
+        raise TemporaryError("OpenAI answered HTTP 503 Service Unavailable")
 
 
 @pytest.fixture
 def fake_client(client: TestClient) -> TestClient:
-    """The API with the fake embedder, as if VOYAGE_API_KEY were set."""
+    """The API with the fake embedder, as if OPENAI_API_KEY were set."""
     client.app.state.embedder = FakeEmbedder()
     return client
 
@@ -506,14 +507,14 @@ def test_a_selective_filter_through_the_api(
 def test_no_embedder_hybrid_gives_keyword_results_and_says_so(
     client: TestClient, conn: Conn
 ) -> None:
-    assert client.app.state.embedder is None  # tests run with no VOYAGE_API_KEY
+    assert client.app.state.embedder is None  # tests run with no OPENAI_API_KEY
     item = add_item(conn)
     chunk = add_chunk(conn, item, "The registry tracks every credit.", vector=None)
     body = client.get("/search", params={"q": "registry"}).json()
     assert body["requested_mode"] == "hybrid"
     assert body["mode"] == "keyword"
     assert body["degraded"] is True
-    assert "VOYAGE_API_KEY" in body["notice"]
+    assert "OPENAI_API_KEY" in body["notice"] and "VOYAGE_API_KEY" not in body["notice"]
     assert [h["chunk_id"] for h in body["hits"]] == [chunk]
     assert body["hits"][0]["keyword_rank"] == 1
 
@@ -528,7 +529,21 @@ def test_no_embedder_vector_mode_is_a_clear_error(client: TestClient, conn: Conn
     add_chunk(conn, add_item(conn), "The registry tracks every credit.")
     response = client.get("/search", params={"q": "registry", "mode": "vector"})
     assert response.status_code == 503
-    assert "VOYAGE_API_KEY" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "OPENAI_API_KEY" in detail and "VOYAGE_API_KEY" not in detail
+
+
+def test_with_voyage_configured_the_messages_name_its_key(client: TestClient, conn: Conn) -> None:
+    client.app.state.settings = replace(
+        client.app.state.settings, embedding_provider="voyage", embedding_model="voyage-4"
+    )
+    add_chunk(conn, add_item(conn), "The registry tracks every credit.", vector=None)
+    notice = client.get("/search", params={"q": "registry"}).json()["notice"]
+    assert "VOYAGE_API_KEY" in notice and "OPENAI_API_KEY" not in notice
+    response = client.get("/search", params={"q": "registry", "mode": "vector"})
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert "VOYAGE_API_KEY" in detail and "OPENAI_API_KEY" not in detail
 
 
 def test_a_failing_embedder_degrades_hybrid_to_keyword(client: TestClient, conn: Conn) -> None:
