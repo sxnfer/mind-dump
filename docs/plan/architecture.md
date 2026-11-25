@@ -16,7 +16,8 @@ flowchart LR
     W -- fetch --> WEB["The web<br/>pages behind links"]
     W -- "land raw page (D28)" --> FS
     W -- "embed chunks (Voyage, D8)<br/>describe images (Claude, D7b)" --> M["Model APIs<br/>Voyage: embeddings<br/>Claude: descriptions, answers"]
-    API -- "embed search query (D37)<br/>agent asks" --> M
+    API -- "embed search query (D37)<br/>agent asks, streams answers (D9)" --> M
+    API -. "answers as Server-Sent Events" .-> App
 ```
 
 Platform under every box (the DevOps half): Docker, CI/CD, Terraform, secrets, logs, metrics and alerts.
@@ -30,6 +31,6 @@ Platform under every box (the DevOps half): Docker, CI/CD, Terraform, secrets, l
 | Job queue | Hold slow work until a worker is free | The ticket rail in a kitchen | Async work, retries, idempotency |
 | Workers | Fetch, extract, chunk, embed, tag | The cooks who read the tickets | Pipelines, failure handling, scaling |
 | Model APIs | Turn text into vectors (Voyage) and images and questions into words (Claude), with the owner's keys (D8) | A translator you pay per word | External APIs, rate limits, cost caps |
-| Agent (in the API) | Use search as a tool to answer | A librarian who looks things up | Tool loops, guardrails, evaluation |
+| Agent (in the API) | Use search as a tool to answer, cite every claim, keep chats; every model call is priced against a daily cap (D9, D21, D38, D39) | A librarian who looks things up | Tool loops, guardrails, evaluation |
 
 The backend does not care what the client is. The Swift app is just one client of the API. A web or Windows client could come later without backend changes.
