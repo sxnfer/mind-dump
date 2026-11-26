@@ -22,14 +22,19 @@ struct IslandMetrics: Equatable {
 ///
 /// It is a second shape, apart from the black body, because the notch is black hardware:
 /// glass that touched it would have nothing to bend there. `top` is the distance from the
-/// screen's top edge to the capsule's top. Closed, the capsule is tucked up inside the
-/// notch, where the black body hides it; it comes out of the notch and goes back into it.
+/// screen's top edge to the capsule's top. It appears and leaves in place, just under the
+/// notch: closed, it keeps its place and size and is only hidden, so its top edge never
+/// moves and nothing of it ever crosses the notch's edge.
 struct CapsuleMetrics: Equatable {
     var width: CGFloat
     var height: CGFloat
     var top: CGFloat
-    /// False once it is tucked away: the glass stops drawing.
+    /// False while closed: the glass is faded out and stops drawing.
     var shown: Bool
+    /// True on the one change that brings it into view. It takes its new size at once,
+    /// while it is still invisible (a drop target is narrower than the box), so the person
+    /// sees only the fade and the scale, never a resize. Any later change clears it.
+    var arrives = false
 }
 
 /// Turns "which presentation" into sizes, from the one thing measured on the Mac: the notch.
@@ -74,15 +79,19 @@ struct IslandLayout: Equatable {
         )
     }
 
-    /// Pointer over the notch: a little wider and deeper, enough to notice.
+    /// Pointer over the notch: just wide enough for the + and the status dot beside the
+    /// cutout, and a few points deeper, enough to notice. The soft shadow says the rest.
+    /// (Slice 8: 30-point wings, 6 points deeper, shadow 0.25.)
     var peek: IslandMetrics {
         IslandMetrics(
-            width: notch.width + 2 * Self.peekWing, height: notch.height + 6,
-            corner: 14, shoulder: 6, shadow: 0.25, keyline: 0.7
+            width: notch.width + 2 * Self.peekWing, height: notch.height + 4,
+            corner: 12, shoulder: 5, shadow: 0.15, keyline: 0.7
         )
     }
 
-    static let peekWing: CGFloat = 30
+    /// The + is 12 points wide and the dot 7: a 24-point wing leaves the + 6 points on
+    /// each side, clear of the 12-point bottom corner below it.
+    static let peekWing: CGFloat = 24
 
     /// A status pill: the notch plus a wing on each side sized to its content. The two
     /// wings are kept equal so the pill stays centred on the notch.
@@ -109,13 +118,6 @@ struct IslandLayout: Equatable {
     /// A drag carrying text is over the notch: the capsule comes out as the target.
     var dropCapsule: CapsuleMetrics {
         CapsuleMetrics(width: Self.dropWidth, height: Self.capsuleHeight, top: capsuleTop, shown: true)
-    }
-
-    /// Closed: a small capsule up inside the notch, behind the black body. Opening springs
-    /// it down and out from there, closing pulls it back in, so it reads as coming out of
-    /// the notch rather than as a window popping up.
-    var tucked: CapsuleMetrics {
-        CapsuleMetrics(width: max(notch.width - 60, 80), height: 26, top: max(notch.height - 30, 0), shown: false)
     }
 
     /// Width of the band beside the notch inside a body of this width. Content placed

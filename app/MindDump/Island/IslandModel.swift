@@ -125,16 +125,7 @@ final class IslandModel {
     private var compactWings = CGSize(width: 44, height: 44)
 
     /// System "Reduce motion". The view keeps this in sync.
-    var reduceMotion = false {
-        didSet {
-            // With it on, a closed capsule waits where it opens, hidden, so the next open
-            // only fades it in: nothing travels out of the notch.
-            guard reduceMotion, !capsule.shown else { return }
-            var resting = layout.capsule(content: capsuleContentHeight)
-            resting.shown = false
-            capsule = resting
-        }
-    }
+    var reduceMotion = false
 
     /// Why the open capsule is open; nil while it is closed. A capsule the app opened
     /// becomes `.user` when the user clicks it (`claim`).
@@ -155,8 +146,8 @@ final class IslandModel {
     private var isHovering = false
     /// Debug only: a script is standing in for the pointer, so ignore the real one.
     var hoverIsScripted = false
-    /// First leg of a collapse: the capsule is going back into the notch, and the body
-    /// waits there before it opens out to the pill.
+    /// First leg of a collapse: the capsule has started to fade out in place, and the
+    /// body waits at the notch a moment before it opens out to the pill.
     private var isCollapsingToNotch = false
     private var lastTransition = ContinuousClock.now
     private var lastContentChange = ContinuousClock.now - .seconds(10)
@@ -175,7 +166,10 @@ final class IslandModel {
     init(layout: IslandLayout = .fallback) {
         self.layout = layout
         metrics = layout.idle
-        capsule = layout.tucked
+        // Closed from the start: hidden where it opens.
+        var resting = layout.capsule(content: IslandLayout.capsuleHeight)
+        resting.shown = false
+        capsule = resting
     }
 
     // MARK: Intent
@@ -263,7 +257,7 @@ final class IslandModel {
         close()
     }
 
-    /// Close with nothing to report: the capsule goes back into the notch (and the body
+    /// Close with nothing to report: the capsule fades out where it is (and the body
     /// peeks, if the pointer is still there).
     func close() {
         guard presentation.isOpen else { return }
@@ -271,8 +265,9 @@ final class IslandModel {
     }
 
     /// Show a status pill. From the open capsule (or a released drop target) this is a
-    /// collapse: the capsule goes back up into the notch, and as it arrives the body opens
-    /// out to the pill, which reads as the notch swallowing it and answering.
+    /// collapse in two legs: the capsule starts to fade out in place, and a beat later
+    /// (`collapseRetarget`), while it is still going, the body opens out to the pill. So
+    /// the answer comes as the capsule leaves: not before it, and not after a pause.
     func show(_ activity: IslandActivity) {
         #if DEBUG
         // What the pill says, so a debug script's log shows it (pills hold no user content).
@@ -298,7 +293,8 @@ final class IslandModel {
         if fromLarge && !reduceMotion {
             sequence?.cancel()
             apply(
-                .compact(activity), metrics: layout.idle, capsule: layout.tucked, motion: .collapse,
+                .compact(activity), metrics: layout.idle, capsule: capsuleTarget(for: .compact(activity)),
+                motion: .collapse,
                 name: fromDrop ? "drop" : "collapse"
             )
             isCollapsingToNotch = true
@@ -436,10 +432,12 @@ final class IslandModel {
         case .open: return layout.capsule(content: capsuleContentHeight)
         case .dropTarget: return layout.dropCapsule
         case .idle, .peek, .compact:
-            // Reduce Motion: it fades where it is, with no trip into the notch.
-            guard reduceMotion else { return layout.tucked }
+            // Closed: it stays where it is, at its size, and fades out. (Its top follows
+            // the layout, in case the display changed.)
             var here = capsule
+            here.top = layout.capsuleTop
             here.shown = false
+            here.arrives = false
             return here
         }
     }
@@ -463,6 +461,9 @@ final class IslandModel {
     ) {
         let wasOpen = presentation.isOpen
         if wasOpen && !next.isOpen { onWillClose?() }
+        var capsule = capsule
+        // Coming into view: it takes its size at once, unseen (see `CapsuleMetrics.arrives`).
+        capsule.arrives = capsule.shown && !self.capsule.shown
         let chosen = reduceMotion ? IslandMotion.reduced : motion
         isCollapsingToNotch = false
         lastTransition = .now

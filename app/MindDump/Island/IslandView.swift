@@ -23,8 +23,7 @@ struct IslandView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            // Behind the body: closed, the capsule is tucked up inside the notch, where
-            // the black body covers it.
+            // Under the notch, apart from the body: the two never overlap.
             capsuleLayer
             blackBody
         }
@@ -120,19 +119,20 @@ struct IslandView: View {
 
     // MARK: Glass capsule
 
-    /// The capsule: one glass shape whose width, height and place each follow a spring.
-    /// What is inside it (the open box and card, or the drop target) is laid out at its
-    /// own final size, and the growing shape reveals it, as the black body does.
+    /// The capsule: one glass shape just under the notch. It appears and leaves in place
+    /// (`IslandMotion.capsuleIn`, `capsuleOut`): it fades and scales from its top centre,
+    /// so its top edge never moves and nothing of it ever reaches the notch. While it is
+    /// showing, its width and height each follow a spring (the drop target becoming the
+    /// box, an answer card growing). What is inside it (the open box and card, or the drop
+    /// target) is laid out at its own final size, and the shape reveals it, as the black
+    /// body does.
     ///
     /// The open content is never removed, only hidden. Rebuilding it on every open cost
     /// up to 70 ms with a long answer in it (every line laid out again), which delayed
     /// the open. Hidden, it costs nothing; shown, it is already built.
     private var capsuleLayer: some View {
         let capsule = island.capsule
-        // Same springs as the body; blur held to the glass's limit (see `glassBlurLimit`).
-        let motion = island.motion.inGlass
-        // Going back into the notch: the tuck springs, if this motion has them.
-        let tucking = capsule.shown ? nil : motion.tuck
+        let motion = island.motion
         let drop: DropTarget? = if case .dropTarget(let target) = island.presentation { target } else { nil }
         return GlassEffectContainer {
             Color.clear
@@ -144,7 +144,7 @@ struct IslandView: View {
                 .overlay(alignment: .top) {
                     ZStack {
                         if let drop {
-                            DropTargetContent(drop: drop).transition(IslandContentTransition(motion: motion))
+                            DropTargetContent(drop: drop).transition(CapsuleContentTransition(motion: motion))
                         }
                     }
                 }
@@ -154,31 +154,40 @@ struct IslandView: View {
                         // A refused drag gets a quiet rim: "not here", without a colour.
                         .strokeBorder(drop?.isRefused == true ? Color.white.opacity(0.3) : CapsuleStyle.accent, lineWidth: 2)
                         .opacity(drop == nil ? 0 : 1)
-                        .animation(drop == nil ? motion.contentOut : motion.contentIn, value: drop == nil)
+                        .animation(drop == nil ? motion.capsuleOut : motion.capsuleIn, value: drop == nil)
                         .allowsHitTesting(false)
                 }
                 .clipShape(CapsuleShape())
                 // On the content itself, not as a sibling: the container draws glass above
                 // anything that is not the glass's own content (the rim included).
                 .modifier(CapsuleSurface())
-                .animation(tucking ?? motion.edges) { $0.modifier(IslandWidth(width: capsule.width)) }
-                .animation(tucking ?? motion.body) { $0.modifier(IslandHeight(height: capsule.height)) }
-                .offset(y: capsule.top)
-                .animation(tucking ?? motion.body, value: capsule.top)
-                // Fades in at once (it starts hidden inside the notch anyway) and out only
-                // once it is back up there, so the glass stops drawing while closed.
-                .opacity(capsule.shown ? 1 : 0)
-                .animation(capsule.shown ? motion.glassIn : motion.glassOut, value: capsule.shown)
+                // Coming into view it takes its size at once, while still invisible: only
+                // the fade and the scale below show (see `CapsuleMetrics.arrives`). A nil
+                // `animation(_:body:)` would not do: nil there means "inherit", and the
+                // glass sprang from the box's 520 points to the drop target's 300.
+                .transaction { $0.animation = capsule.arrives ? nil : motion.edges } body: {
+                    $0.modifier(IslandWidth(width: capsule.width))
+                }
+                .transaction { $0.animation = capsule.arrives ? nil : motion.body } body: {
+                    $0.modifier(IslandHeight(height: capsule.height))
+                }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        // Nothing of the glass shows above the bottom of the notch: it slides out from
-        // behind the menu bar's lower edge, where the notch is, and back in.
-        .mask(alignment: .top) {
-            VStack(spacing: 0) {
-                Color.clear.frame(height: island.layout.notch.height)
-                Color.black
-            }
-        }
+        // Centred here, inside the same no-animation scope: the container morphs the glass
+        // on the update's own animation, and the centring moved the capsule's left edge
+        // from the box's place to the target's over the fade (a slide sideways).
+        .frame(maxWidth: .infinity, alignment: .top)
+        .transaction { if capsule.arrives { $0.animation = nil } }
+        // Glass, tint and content fade and scale as one layer, from the top centre (the
+        // frame above is as wide as the window and centred on the notch). Outside
+        // the container: inside it, the glass ignored the opacity (it drew at full strength
+        // from the first frame of a fade in) and drew a second, unscaled edge beside the
+        // scaled shape.
+        .scaleEffect(capsule.shown ? 1 : motion.capsuleScale, anchor: .top)
+        .opacity(capsule.shown ? 1 : 0)
+        .animation(capsule.shown ? motion.capsuleIn : motion.capsuleOut, value: capsule.shown)
+        .allowsHitTesting(capsule.shown)
+        .offset(y: capsule.top)
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     /// The first time SwiftUI builds a view it creates the text field, loads fonts and
@@ -297,22 +306,33 @@ private struct IslandPressStyle: ButtonStyle {
     }
 }
 
-/// The capsule content's version of `IslandContentTransition`, for a view that stays in
-/// place: the same blur, scale and fade, driven by "shown" instead of by insertion and
-/// removal. Hidden, it takes no clicks and is invisible to VoiceOver. (Taking the blur
-/// out was measured: no clear gain in open or close, so it stays.)
+/// The capsule's content, shown or hidden in place, in step with the capsule itself: it
+/// sharpens from a light blur and fades (the capsule does the scaling). Driven by "shown"
+/// instead of by insertion and removal. Hidden, it takes no clicks and is invisible to
+/// VoiceOver.
 private struct CapsulePresence: ViewModifier {
     let shown: Bool
     let motion: IslandMotion
 
     func body(content: Content) -> some View {
         content
-            .blur(radius: shown ? 0 : motion.blurOut)
-            .scaleEffect(shown ? 1 : motion.contentScale, anchor: .top)
+            .blur(radius: shown ? 0 : motion.capsuleBlur)
             .opacity(shown ? 1 : 0)
-            .animation(shown ? motion.contentIn : motion.contentOut, value: shown)
+            .animation(shown ? motion.capsuleIn : motion.capsuleOut, value: shown)
             .allowsHitTesting(shown)
             .accessibilityHidden(!shown)
+    }
+}
+
+/// The same, for the drop target's words, which come and go with the target.
+private struct CapsuleContentTransition: Transition {
+    let motion: IslandMotion
+
+    func body(content: Content, phase: TransitionPhase) -> some View {
+        content
+            .blur(radius: phase.isIdentity ? 0 : motion.capsuleBlur)
+            .opacity(phase.isIdentity ? 1 : 0)
+            .animation(phase.isIdentity ? motion.capsuleIn : motion.capsuleOut, value: phase)
     }
 }
 
