@@ -229,7 +229,8 @@ extension IslandMotion {
     }
 
     /// The capsule to a small status pill ("Saved"). First leg only: the capsule goes back
-    /// into the notch while the body waits there, then the model retargets with `settle`
+    /// into the notch while the body takes the hover shape over it (so the glass never
+    /// crosses the edge without the island there), then the model retargets with `settle`
     /// and the body opens out to the pill: swallowed, then answered.
     ///
     /// The retarget stays at `collapseRetarget` (0.311 s) in every tuning: the bouncier
@@ -425,6 +426,52 @@ extension IslandMotion {
         motion.blurIn = min(blurIn, Self.glassBlurLimit)
         motion.blurOut = min(blurOut, Self.glassBlurLimit)
         return motion
+    }
+
+    // MARK: The island opens its mouth
+
+    /// The glass never crosses the notch's lower edge without the black island there.
+    ///
+    /// Why: everything of the glass above that edge is cut by one straight line across the
+    /// window. From the hover shape the island covers that line, so the glass comes out of
+    /// something. From the bare notch nothing on screen is as wide as the glass, and the
+    /// straight cut read as an island that was not there. So from the bare notch the body
+    /// first takes the hover shape (`swell`, over `mouthLead`), the capsule then comes out
+    /// exactly as it does from hover, and the body relaxes; on the way back it swells as the
+    /// glass comes in and relaxes once the glass is in (`swallowed`).
+    ///
+    /// How long the body swells before the glass starts to move. The keyboard does not wait
+    /// for it: only the glass starts this much later.
+    static let mouthLead = 0.07
+
+    /// The swell, the same in every tuning. Its peak lands at `mouthLead` (a spring with
+    /// damping z peaks at response / (2 * sqrt(1 - z^2))), so the body hands over to the
+    /// open springs at rest, as it does from hover. 0.85 overshoots 0.6%: under half a
+    /// point on the 64 points it widens.
+    @MainActor static var swell: Animation { spring(0.0738, 0.85) }
+
+    /// The first leg of a move out of the bare notch: the shape swells; the content keeps
+    /// these springs, `mouthLead` later, so it arrives with the glass as it does from hover.
+    @MainActor var openingMouth: IslandMotion {
+        var motion = self
+        motion.edges = Self.swell
+        motion.body = Self.swell
+        motion.corner = Self.swell
+        // A shadow never bounces.
+        motion.shadow = Self.spring(0.0738, 1)
+        motion.contentIn = contentIn.delay(Self.mouthLead * Self.timeScale)
+        return motion
+    }
+
+    /// Seconds after a close starts when the glass has gone back in, so the swollen body
+    /// can relax to the bare notch. By then a one-line capsule is a point or less below the
+    /// edge and narrower than the notch (simulated: calm 182 points wide at 0.30 s, the tuck
+    /// spring 194 at 0.24 s, against a 220-point notch), and a taller card narrower still.
+    @MainActor static var swallowed: Double {
+        switch tuning {
+        case .calm: 0.3
+        case .springy, .drastic: 0.24
+        }
     }
 
     // MARK: Timings that sequence the springs

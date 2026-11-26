@@ -156,8 +156,17 @@ final class IslandModel {
     /// Debug only: a script is standing in for the pointer, so ignore the real one.
     var hoverIsScripted = false
     /// First leg of a collapse: the capsule is going back into the notch, and the body
-    /// waits there before it opens out to the pill.
+    /// holds the hover shape over it before it opens out to the pill.
     private var isCollapsingToNotch = false
+    /// The island's mouth (`IslandMotion.mouthLead`): the body has taken the hover shape
+    /// for the glass to cross the notch's edge, and will move on when `sequence` says so.
+    private enum Mouth {
+        /// Swelling first; the capsule waits tucked in the notch.
+        case opening
+        /// Swollen while the glass goes back in; it relaxes once the glass is in.
+        case swallowing
+    }
+    private var mouth: Mouth?
     private var lastTransition = ContinuousClock.now
     private var lastContentChange = ContinuousClock.now - .seconds(10)
     /// A transition started so recently that its springs are still doing the work.
@@ -242,7 +251,7 @@ final class IslandModel {
         dropReleased = false
         openedBy = reason
         NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
-        go(.open, with: .open, name: reason == .user ? "open" : "open-waiting")
+        bringOut(.open, with: .open, name: reason == .user ? "open" : "open-waiting")
     }
 
     /// The user clicked a capsule that opened by itself (or pressed the shortcut while it
@@ -267,7 +276,7 @@ final class IslandModel {
     /// peeks, if the pointer is still there).
     func close() {
         guard presentation.isOpen else { return }
-        go(isHovering ? .peek : .idle, with: .dismiss, name: "close")
+        tuckIn(name: "close")
     }
 
     /// Show a status pill. From the open capsule (or a released drop target) this is a
@@ -297,8 +306,11 @@ final class IslandModel {
         }
         if fromLarge && !reduceMotion {
             sequence?.cancel()
+            // The body takes the hover shape while the glass goes in, as a close does
+            // (`tuckIn`), so the glass never crosses the notch's edge under a bare notch
+            // narrower than itself; then it opens out to the pill.
             apply(
-                .compact(activity), metrics: layout.idle, capsule: layout.tucked, motion: .collapse,
+                .compact(activity), metrics: layout.peek, capsule: layout.tucked, motion: .collapse,
                 name: fromDrop ? "drop" : "collapse"
             )
             isCollapsingToNotch = true
@@ -340,7 +352,7 @@ final class IslandModel {
         // ("Saved") was about to fold away anyway.
         if case .compact(let activity) = presentation, activity.hold == nil { parked = activity } else { parked = nil }
         dropReleased = false
-        go(.dropTarget(drop), with: .target, name: "target")
+        bringOut(.dropTarget(drop), with: .target, name: "target")
     }
 
     /// The drag left, or was cancelled: back to what showed before.
@@ -351,7 +363,7 @@ final class IslandModel {
             parked = nil
             go(.compact(activity), with: .settle, name: "target-exit", hold: activity.hold)
         } else {
-            go(isHovering ? .peek : .idle, with: .dismiss, name: "target-exit")
+            tuckIn(name: "target-exit")
         }
     }
 
@@ -380,7 +392,9 @@ final class IslandModel {
         let height = growsInSteps && measured > 2 * step ? (measured / step).rounded(.up) * step : measured
         guard abs(height - capsuleContentHeight) > 0.5 else { return }
         capsuleContentHeight = height
-        guard presentation.isOpen else { return }
+        // While the island swells, the capsule waits in the notch; the next leg takes the
+        // new height with it.
+        guard presentation.isOpen, mouth != .opening else { return }
         // Already open and settled: the content grew or shrank in place (an answer card,
         // an error line). While the capsule is still opening, keep its springs and only
         // move the target.
@@ -455,6 +469,57 @@ final class IslandModel {
         }
     }
 
+    /// The capsule comes out of the notch (the open capsule, or the drop target).
+    ///
+    /// From hover, or a pill, the black island is already there and the glass comes out
+    /// under it. From the bare notch the island first opens its mouth: the body takes the
+    /// hover shape (`IslandMotion.mouthLead`) while the capsule waits in the notch, then the
+    /// move goes on exactly as from hover. Presentation, and so the keyboard, change at once;
+    /// only the glass starts later. Not under Reduce Motion: there nothing travels.
+    private func bringOut(_ next: IslandPresentation, with motion: IslandMotion, name: String) {
+        // Swallowing, the body is still in the hover shape: come straight back out.
+        guard presentation == .idle, mouth != .swallowing, !reduceMotion else {
+            go(next, with: motion, name: name)
+            return
+        }
+        sequence?.cancel()
+        // Turned on where it is, behind the mask, so the glass is drawing when it moves.
+        var waiting = layout.tucked
+        waiting.shown = true
+        apply(next, metrics: layout.peek, capsule: waiting, motion: motion.openingMouth, name: name)
+        mouth = .opening
+        sequence = Task { [weak self] in
+            try? await Task.sleep(for: IslandMotion.seconds(IslandMotion.mouthLead))
+            guard let self, !Task.isCancelled else { return }
+            self.apply(
+                next, metrics: self.target(for: next), capsule: self.capsuleTarget(for: next), motion: motion,
+                name: name + "-out"
+            )
+        }
+    }
+
+    /// The capsule goes back into the notch (a close, or a drag that left).
+    ///
+    /// With the pointer on the island the body peeks, which covers the glass on its way
+    /// in. Without it, the body still takes the hover shape while the glass crosses the
+    /// edge (with no + or dot: those mean "pointer here"), then relaxes to the bare notch
+    /// once the glass is in (`IslandMotion.swallowed`).
+    private func tuckIn(name: String) {
+        guard !isHovering, !reduceMotion else {
+            go(isHovering ? .peek : .idle, with: .dismiss, name: name)
+            return
+        }
+        sequence?.cancel()
+        apply(.idle, metrics: layout.peek, capsule: capsuleTarget(for: .idle), motion: .dismiss, name: name)
+        mouth = .swallowing
+        sequence = Task { [weak self] in
+            try? await Task.sleep(for: IslandMotion.seconds(IslandMotion.swallowed))
+            guard let self, !Task.isCancelled else { return }
+            // The capsule keeps its tuck; only the body moves, as a pointer leaving does.
+            self.apply(.idle, metrics: self.layout.idle, capsule: self.capsule, motion: .unpeek, name: name + "-relax")
+        }
+    }
+
     /// The one place state changes. Presentation, sizes and springs move in the same
     /// update, so the view never sees a new size with the old springs.
     private func apply(
@@ -465,6 +530,7 @@ final class IslandModel {
         if wasOpen && !next.isOpen { onWillClose?() }
         let chosen = reduceMotion ? IslandMotion.reduced : motion
         isCollapsingToNotch = false
+        mouth = nil
         lastTransition = .now
         self.motion = chosen
         // The carrier animation only keeps outgoing content alive long enough to leave;
