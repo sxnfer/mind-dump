@@ -10,9 +10,14 @@
 
 An answering endpoint returns JSON, or Server-Sent Events when asked (?stream=true or
 Accept: text/event-stream): "status" (thinking, searching with the query, reading an
-item), "delta" (answer text as it comes), then "final" with exactly the JSON the plain
-endpoint returns, or "error" with the status and the reason. Nothing is saved unless
-"final" is sent.
+item), "passages" (the passages the model may cite from now on, as chunk_id and item_id
+pairs: at the start for those of earlier turns, then after each tool result; always
+before any "delta" that cites them), "delta" (answer text as it comes), then "final"
+with exactly the JSON the plain endpoint returns, or "error" with the status and the
+reason. Nothing is saved unless "final" is sent.
+
+    event: passages
+    data: {"passages": [{"chunk_id": 412, "item_id": 37}, {"chunk_id": 415, "item_id": 37}]}
 
 Checks, in this order, all before any model call:
 404 no such conversation; 409 its item was deleted; 503 no ANTHROPIC_API_KEY;

@@ -455,13 +455,15 @@ private struct SourceRow: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.5))
                     .frame(width: 14)
+                // One line: the title shortens first; the pages (fixed size) and the
+                // arrow (fixed frame) keep theirs.
                 Text(source.title)
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(.white.opacity(0.86))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                if let page = source.citation.page {
-                    Text("p. \(page)")
+                if let pages = source.pageLabel {
+                    Text(pages)
                         .font(.system(size: 11.5).monospacedDigit())
                         .foregroundStyle(.white.opacity(0.4))
                         .fixedSize()
@@ -489,17 +491,39 @@ private struct SourceRow: View {
             .frame(minHeight: 18)
             .debugTarget("source-\(source.number)")
             if expanded {
-                Text(source.citation.quote.trimmingCharacters(in: .whitespacesAndNewlines))
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .lineSpacing(3)
-                    .lineLimit(9)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 42)
-                    .padding(.trailing, 6)
-                    .padding(.bottom, 2)
-                    .textSelection(.enabled)
-                    .transition(.opacity.combined(with: .offset(y: -3)))
+                // Every passage of this item the answer cited, once each, in the order
+                // first cited. With several, each quote names its own page and shows at
+                // most three lines (ending in "…"), and at most six quotes show: a row
+                // with many passages stays a short list to scan, not a wall of text.
+                let several = source.citations.count > 1
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(source.shownCitations, id: \.marker) { citation in
+                        VStack(alignment: .leading, spacing: 2) {
+                            if several, let page = citation.page {
+                                Text("p. \(page)")
+                                    .font(.system(size: 10.5).monospacedDigit())
+                                    .foregroundStyle(.white.opacity(0.36))
+                            }
+                            Text(citation.quote.trimmingCharacters(in: .whitespacesAndNewlines))
+                                .font(.system(size: 12))
+                                .foregroundStyle(.white.opacity(0.6))
+                                .lineSpacing(3)
+                                .lineLimit(several ? 3 : 9)
+                                .truncationMode(.tail)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    if source.hiddenCount > 0 {
+                        Text("and \(source.hiddenCount) more passages")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.36))
+                    }
+                }
+                .padding(.leading, 42)
+                .padding(.trailing, 6)
+                .padding(.bottom, 2)
+                .textSelection(.enabled)
+                .transition(.opacity.combined(with: .offset(y: -3)))
             }
         }
         .padding(.horizontal, 8)
@@ -513,8 +537,12 @@ private struct SourceRow: View {
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Source \(source.number): \(source.title)\(source.citation.page.map { ", page \($0)" } ?? "")")
-        .accessibilityHint(expanded ? "Hides the passage" : "Shows the passage")
+        .accessibilityLabel("Source \(source.number): \(source.title)\(source.pageLabel.map { ", \($0)" } ?? "")")
+        .accessibilityHint(
+            expanded
+                ? (source.citations.count > 1 ? "Hides the passages" : "Hides the passage")
+                : (source.citations.count > 1 ? "Shows \(source.citations.count) passages" : "Shows the passage")
+        )
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { ask.toggle(source) }
     }

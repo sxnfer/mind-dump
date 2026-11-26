@@ -2,7 +2,8 @@
 
     answer_events(...)  the whole of one message: read the history, run the agent
                         (agent.run_turn), save the turn, then yield ("final", answer).
-                        Status and delta events stream out as they happen.
+                        Status, passages and delta events stream out as they
+                        happen.
 
 Saving rules:
 - The owner's message and the answer are written together, in ONE transaction, only
@@ -257,7 +258,7 @@ def answer_events(
     new: NewConversation | None = None,
     on_result: Callable[[TurnResult], None] | None = None,
 ) -> Generator[tuple[str, dict], None, None]:
-    """One message, end to end: status and delta events while it runs, then ("final",
+    """One message, end to end: status, passages and delta events while it runs, then ("final",
     the answer as the API returns it). Raises if it fails; then nothing was saved."""
     if conversation_id is not None:
         with ctx.db() as conn:

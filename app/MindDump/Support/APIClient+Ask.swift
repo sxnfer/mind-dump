@@ -41,6 +41,14 @@ extension APIClient: AnswerSource {
         var markerID: Int? { Int(marker.dropFirst(3).dropLast()) }
     }
 
+    /// A passage the model may cite from now on, and the item it belongs to. The stream
+    /// sends these ("passages") before any text that cites them, so the app can number
+    /// sources by item while the words flow, and never renumber them.
+    struct Passage: Equatable, Sendable {
+        let chunkId: Int
+        let itemId: Int
+    }
+
     /// The `final` event: the answer as the backend checked and saved it.
     struct Answer: Decodable, Equatable, Sendable {
         let conversationId: Int
@@ -52,6 +60,7 @@ extension APIClient: AnswerSource {
 
     enum AskEvent: Sendable {
         case status(AskStatus)
+        case passages([Passage])
         case delta(String)
         case final(Answer)
         case failed(status: Int, detail: String)
@@ -178,6 +187,13 @@ extension APIClient: AnswerSource {
             case "reading": return .status(.reading(json["item_id"] as? Int))
             default: return .status(.thinking)
             }
+        case "passages":
+            let list = json["passages"] as? [[String: Any]] ?? []
+            return .passages(
+                list.compactMap { p in
+                    guard let chunk = p["chunk_id"] as? Int, let item = p["item_id"] as? Int else { return nil }
+                    return Passage(chunkId: chunk, itemId: item)
+                })
         case "delta":
             return (json["text"] as? String).map(AskEvent.delta)
         case "final":

@@ -15,11 +15,44 @@ final class AskModel {
         case done        // the answer is complete, sources shown
     }
 
-    /// One numbered source under the answer.
+    /// One numbered source under the answer: one item (a note, a link, a file), with
+    /// every passage of it the answer cited, in the order first cited.
     struct Source: Identifiable, Equatable {
         let number: Int
-        let citation: APIClient.Citation
+        var citations: [APIClient.Citation]
         var id: Int { number }
+
+        /// The first passage cited: the item's title, type and link are the same in all.
+        var citation: APIClient.Citation { citations[0] }
+
+        /// The pages cited, once each and in order, with runs of pages as a range:
+        /// "p. 4, 9", "p. 4, 9–11", "p. 1–13". Short, so one header line holds it. Nil
+        /// when none has a page.
+        var pageLabel: String? {
+            let pages = Array(Set(citations.compactMap(\.page))).sorted()
+            guard var start = pages.first else { return nil }
+            var runs: [String] = []
+            var end = start
+            for page in pages.dropFirst() {
+                if page == end + 1 {
+                    end = page
+                    continue
+                }
+                runs.append(start == end ? "\(start)" : "\(start)–\(end)")
+                start = page
+                end = page
+            }
+            runs.append(start == end ? "\(start)" : "\(start)–\(end)")
+            return "p. " + runs.joined(separator: ", ")
+        }
+
+        /// An open row shows at most this many passages: a long PDF can be cited 19
+        /// times, and every quote at once is a wall of text (and a long layout).
+        static let shownPassages = 6
+
+        /// The passages an open row shows, and how many it leaves out.
+        var shownCitations: ArraySlice<APIClient.Citation> { citations.prefix(Self.shownPassages) }
+        var hiddenCount: Int { max(0, citations.count - Self.shownPassages) }
 
         /// What the row is called: the title, else the web address's host, else the
         /// first words of the passage.
@@ -232,10 +265,13 @@ final class AskModel {
             // Words, then a search: those words were a preamble ("Let me look…"), not
             // the answer. The backend's final text leaves them out, so they go now.
             if case .thinking = next {} else if !reveal.isEmpty, answer == nil {
-                withAnimation(contentSpring) { reveal.reset() }
+                withAnimation(contentSpring) { reveal.reset(keepingPassages: true) }
             }
             // Plain assignment: the status line animates its own words (see `hideStatus`).
             status = next
+        case .passages(let passages):
+            // Before any text that cites them: the numbers are by item from the start.
+            reveal.learn(passages.map { ($0.chunkId, $0.itemId) })
         case .delta(let text):
             // Plain assignment, for the same reason as `hideStatus`: the hint line that
             // reads the phase animates itself.
@@ -249,6 +285,9 @@ final class AskModel {
                 status = nil
                 if phase == .waiting { phase = .answering }
             }
+            // The checked citations name every cited passage's item. Normally the stream
+            // said so already; a marker it never announced is folded into its item here.
+            reveal.learn(final.citations.compactMap { c in c.markerID.map { ($0, c.itemId) } })
             reveal.onDrained = { [weak self] in self?.complete() }
             reveal.finish(with: final.text)
         case .failed(let code, let detail):
@@ -265,7 +304,7 @@ final class AskModel {
         island.capsuleContentWillChange("sources")
         // Plain assignment: each row brings itself in (`Entrance`), the notices fade in
         // on their own, and the body follows the new height on its spring.
-        sources = answer.grounded ? Self.numbered(answer.citations, by: reveal.references) : []
+        sources = answer.grounded ? Self.numbered(answer.citations, by: reveal.number(ofChunk:)) : []
         phase = .done
         island.growsInSteps = false
     }
@@ -300,8 +339,10 @@ final class AskModel {
         if let lastTurn {
             question = lastTurn.question
             answer = lastTurn.answer
-            reveal.show(lastTurn.answer.text)
-            sources = lastTurn.answer.grounded ? Self.numbered(lastTurn.answer.citations, by: reveal.references) : []
+            reveal.show(lastTurn.answer.text, passages: Self.items(of: lastTurn.answer.citations))
+            sources =
+                lastTurn.answer.grounded
+                ? Self.numbered(lastTurn.answer.citations, by: reveal.number(ofChunk:)) : []
             sourcesHaveEntered = true
             phase = .done
         } else {
@@ -313,19 +354,32 @@ final class AskModel {
         }
     }
 
-    /// Citations in the order their numbers first appear in the text. A citation the
-    /// text never mentions (rare) goes at the end with the next free number.
-    private static func numbered(_ citations: [APIClient.Citation], by references: [Int: Int]) -> [Source] {
+    /// One source per item, in the order their numbers first appear in the text, each
+    /// with its passages in the order first cited (the backend lists citations that way).
+    /// An item the text never mentions (rare) goes at the end with the next free number.
+    private static func numbered(_ citations: [APIClient.Citation], by number: (Int) -> Int?) -> [Source] {
         var seen = Set<Int>()
-        var next = (references.values.max() ?? 0) + 1
+        var next = (citations.compactMap { $0.markerID.flatMap(number) }.max() ?? 0) + 1
+        var row: [Int: Int] = [:]  // item id to its index in `sources`
         var sources: [Source] = []
         for citation in citations {
-            guard let id = citation.markerID, !seen.contains(id) else { continue }
-            seen.insert(id)
-            let number = references[id] ?? { defer { next += 1 }; return next }()
-            sources.append(Source(number: number, citation: citation))
+            guard let id = citation.markerID, seen.insert(id).inserted else { continue }
+            if let index = row[citation.itemId] {
+                sources[index].citations.append(citation)
+                continue
+            }
+            let shown = number(id) ?? { defer { next += 1 }; return next }()
+            row[citation.itemId] = sources.count
+            sources.append(Source(number: shown, citations: [citation]))
         }
         return sources.sorted { $0.number < $1.number }
+    }
+
+    /// Chunk id to item id, for every passage an answer cites.
+    private static func items(of citations: [APIClient.Citation]) -> [Int: Int] {
+        var items: [Int: Int] = [:]
+        for c in citations { if let id = c.markerID { items[id] = c.itemId } }
+        return items
     }
 
     /// Changes inside the capsule (a new turn, sources, an open row) ride the island's resize spring.
@@ -348,16 +402,21 @@ final class AskModel {
                 marker: "[c:2]", chunkId: 2, itemId: 2, type: "link", title: nil, url: "https://example.com/a",
                 page: 3, quote: quote
             ),
+            // A second passage of item 2, so an open row with several quotes is built too.
+            APIClient.Citation(
+                marker: "[c:3]", chunkId: 3, itemId: 2, type: "link", title: nil, url: "https://example.com/a",
+                page: 5, quote: quote
+            ),
         ]
-        let text = "Use step 6 for espresso [c:1].\n\nAeroPress sits at step 14 [c:1][c:2]."
+        let text = "Use step 6 for espresso [c:1].\n\nAeroPress sits at step 14 [c:1][c:2][c:3]."
         let final = APIClient.Answer(
             conversationId: 0, text: text, citations: citations, grounded: true, incomplete: true
         )
         question = "Which grinder step for espresso?"
         answer = final
-        reveal.show(text)
-        sources = Self.numbered(citations, by: reveal.references)
-        expanded = [1]
+        reveal.show(text, passages: Self.items(of: citations))
+        sources = Self.numbered(citations, by: reveal.number(ofChunk:))
+        expanded = [2]
         sourcesHaveEntered = false
         phase = .done
     }

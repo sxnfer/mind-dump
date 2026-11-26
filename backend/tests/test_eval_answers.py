@@ -107,7 +107,10 @@ def test_the_eval_runs_end_to_end_and_reports_every_check(report: harness.Answer
     assert "missing facts: two" in text
     lines = harness.answers_markdown(report, "abc1234", datetime(2026, 11, 25, tzinfo=UTC))
     assert lines.startswith(harness.ANSWERS_HEADING)
-    assert "| 8 | yes | yes | yes | yes | 1/1 |" in lines
+    assert "| 8 | yes | yes | yes | yes | 1/1 | yes |" in lines
+    # The fake writes one plain sentence: prose, for every question.
+    assert all(r.prose for r in report.results)
+    assert "Written as flowing prose (no list, heading or markup): 13/13" in text
 
 
 def test_claims_split_sentences_and_keep_markers_after_the_stop() -> None:
@@ -116,6 +119,39 @@ def test_claims_split_sentences_and_keep_markers_after_the_stop() -> None:
         ("Ten to twenty percent.", [4]),
         ("Fire cancels credits.", [5, 6]),
     ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The pool takes ten to twenty percent of credits. [c:4] Fire can reverse storage, "
+        "so the pool covers it. [c:5][c:6]\n\nFirst you register, then you verify. [c:7]",
+        "A dash - in a sentence, 2024. Then -5 degrees and 1.5 tonnes. [c:4]",
+    ],
+    ids=["two paragraphs", "dashes and numbers mid-text"],
+)
+def test_prose_passes_flowing_sentences(text: str) -> None:
+    assert harness.is_prose(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Two things:\n- the pool [c:4]\n- the fire [c:5]",
+        "Two things:\n* the pool [c:4]",
+        "Two things:\n• the pool [c:4]",
+        "Steps:\n1. Register. [c:4]\n2. Verify.",
+        "Steps:\n1) Register. [c:4]",
+        "## Buffer pool\nTen to twenty percent. [c:4]",
+        "It is **ten to twenty** percent. [c:4]",
+        "It is __ten__ percent. [c:4]",
+        "The code is `MD-2291`. [c:4]",
+    ],
+    ids=["dash", "star", "bullet", "numbered", "numbered paren", "heading", "bold",
+         "underscores", "backtick"],
+)  # fmt: skip
+def test_prose_fails_lists_headings_and_markup(text: str) -> None:
+    assert not harness.is_prose(text)
 
 
 def test_a_fake_run_writes_no_results_file(database_url: str, tmp_path: Path) -> None:

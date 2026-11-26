@@ -2,6 +2,7 @@
 and Server-Sent Events parsing. No network anywhere: the model is a ScriptedLLM."""
 
 import json
+import re
 from contextlib import nullcontext
 from dataclasses import replace
 from decimal import Decimal
@@ -132,6 +133,25 @@ def sse_events(body: str) -> list[tuple[str, dict]]:
         lines = dict(line.split(": ", 1) for line in chunk.splitlines())
         events.append((lines["event"], json.loads(lines["data"])))
     return events
+
+
+def check_announced_first(events: list[tuple[str, dict]]) -> dict[int, int]:
+    """Walk a stream in order and fail if the text cites a passage before a "passages"
+    event announced it. Markers can be split across deltas, so the text so far is
+    re-read after each one. Returns every announced chunk id with its item id."""
+    marker = re.compile(r"\[c:(\d+)\]")
+    announced: dict[int, int] = {}
+    text = ""
+    for kind, data in events:
+        if kind == "passages":
+            for p in data["passages"]:
+                assert set(p) == {"chunk_id", "item_id"}, p
+                announced[p["chunk_id"]] = p["item_id"]
+        elif kind == "delta":
+            text += data["text"]
+            cited = {int(m) for m in marker.findall(text)}
+            assert cited <= set(announced), f"cited before announced: {cited - set(announced)}"
+    return announced
 
 
 def count(conn: Conn, table: str) -> int:
