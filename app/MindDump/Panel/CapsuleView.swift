@@ -387,24 +387,26 @@ enum CapsuleStyle {
     /// The one accent: the send button and the drop target's rim. Close to #1F6FEB, which
     /// holds 4.6:1 against white glyphs.
     static let accent = Color(red: 0x1F / 255, green: 0x6F / 255, blue: 0xEB / 255)
-    /// Secondary text on the dark glass (the prompt, "Save note", the question).
+    /// Secondary text on the glass (the prompt, "Save note", the question).
     static let secondary = 0.72
     /// Flat fills for controls inside the capsule.
     static let controlFill = 0.14
 }
 
-/// The capsule's surface: Liquid Glass, kept dark.
+/// The capsule's surface: Apple's clear Liquid Glass, with no tint.
 ///
-/// Regular glass adapts to what is behind it, and over a bright window it turns light,
-/// which would leave white text unreadable. A dark tint keeps it a dark lens in both
-/// system appearances, so the white text matches the black notch. With Reduce
-/// Transparency on, it is a solid dark shape instead.
+/// San's choice on 2026-11-27, after a preview: "Keep the clear glass." Clear is the most
+/// transparent variant, so the capsule shows the most of what is behind it. It replaced
+/// regular glass with a 60% black tint, plus a 50% black shade while the window was not
+/// key, which kept the glass a dark lens everywhere.
+///
+/// The known cost: over a bright white window the clear glass turns light grey, and the
+/// white text on it is hard to read. Apple recommends clear glass only over rich media,
+/// with about 35% dimming over bright content. No dimming is added on purpose: San chose
+/// the plain clear look, and the legibility over white is a recorded known issue (D41).
+/// With Reduce Transparency on, it is a solid dark shape instead, as before.
 struct CapsuleSurface: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    /// Is the window key? Glass in a window that is not (the drop target, the moment of
-    /// closing) draws lighter: measured over the busy backdrop, the background behind the
-    /// text went from about 80 to about 135 grey, which is too light for white text.
-    @Environment(\.appearsActive) private var appearsActive
 
     func body(content: Content) -> some View {
         if reduceTransparency || Self.forceSolid {
@@ -414,15 +416,7 @@ struct CapsuleSurface: ViewModifier {
                     .overlay { CapsuleShape().strokeBorder(.white.opacity(0.12), lineWidth: 1) }
             }
         } else {
-            content
-                // Under the content, inside the glass: a shade that makes up the difference
-                // while the window is not key.
-                .background {
-                    CapsuleShape()
-                        .fill(.black.opacity(appearsActive ? 0 : CapsuleStyle.inactiveShade))
-                        .animation(.easeOut(duration: 0.2 * IslandMotion.timeScale), value: appearsActive)
-                }
-                .glassEffect(.regular.tint(.black.opacity(CapsuleStyle.glassDim)), in: CapsuleShape())
+            content.glassEffect(.clear, in: CapsuleShape())
         }
     }
 
@@ -434,11 +428,4 @@ struct CapsuleSurface: ViewModifier {
         false
         #endif
     }
-}
-
-extension CapsuleStyle {
-    /// How dark the glass's tint is. Enough that white text reads over a white window.
-    static let glassDim = 0.6
-    /// The extra shade while the window is not key (see `CapsuleSurface`).
-    static let inactiveShade = 0.5
 }

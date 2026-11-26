@@ -1,6 +1,7 @@
 # D41: Liquid Glass panel and the macOS 26 floor
 
 Status: Approved by San, 2026-11-25
+Amended 2026-11-27: the capsule is now Apple's clear glass (`glassEffect(.clear)`), with no tint and no extra shade while the window is not key, at San's choice after a preview ("Keep the clear glass."). Clear is the most transparent variant. Before, it was regular glass with a 60% black tint and a 50% black shade when not key. The cost, accepted and recorded as a known issue: over a bright white window the capsule turns light grey and its white text is hard to read. Apple recommends clear glass only over rich media, with about 35% dimming over bright content; no dimming is added, because San chose the plain clear look. Reduce Transparency still gives a solid dark shape.
 Problem: the open panel's layout needed a rework. San wants it smooth, minimal and premium, and wants Apple's Liquid Glass. Liquid Glass exists only on macOS 26 and later, and the app targeted macOS 14.
 Without it: the panel stays a flat black sheet with a mode switch, a box and a hint. Glass on a black body has almost nothing to bend, so it would not read as glass.
 Options (layout): six directions were drawn in Capture, Ask and Drop (A black body with glass controls, B glass sheet under a black tab, C one glass capsule that grows, D wings left and right of the notch, E thread with a docked input, F one box with action rows).

@@ -31,7 +31,8 @@ struct IslandView: View {
         .background(alignment: .top) { rehearsal }
         .onAppear { if rehearsing { rehearsalPanel = PanelModel.rehearsal(island: island) } }
         .foregroundStyle(.white)
-        // White text on both: the black body, and the glass kept dark (`CapsuleSurface`).
+        // White text on both: the black body, and the clear glass (`CapsuleSurface`; over a
+        // bright window the clear glass turns light grey, a known cost of San's choice).
         .environment(\.colorScheme, .dark)
         .onExitCommand { island.close() }  // Escape
         .onChange(of: reduceMotion, initial: true) { _, on in island.reduceMotion = on || Self.forceReduceMotion }
