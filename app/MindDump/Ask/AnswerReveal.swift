@@ -88,6 +88,14 @@ final class AnswerReveal {
     @ObservationIgnored private var lastTick: CFTimeInterval = 0
     @ObservationIgnored private var ticker: DisplayTicker?
     @ObservationIgnored private var running = false
+    /// The capsule is closed (`hold`): text is kept, nothing is drawn, the link sleeps.
+    @ObservationIgnored private(set) var isHeld = false
+    /// What arrived while held and is applied on `resume`, in this order: the checked
+    /// final text, or a whole text to show (a restored answer); and a flush (a failure:
+    /// show what came, as it is).
+    @ObservationIgnored private var heldFinal: String?
+    @ObservationIgnored private var heldShow: (text: String, passages: [Int: Int])?
+    @ObservationIgnored private var heldFlush = false
 
     /// How long a new character takes to fade in. Short: it reads as ink, not as an effect.
     private static let fade: CFTimeInterval = 0.2
@@ -117,13 +125,21 @@ final class AnswerReveal {
     /// More text from the stream.
     func append(_ piece: String) {
         received.append(contentsOf: piece)
-        startTicking()
+        if !isHeld { startTicking() }
     }
+
+    /// Any text has arrived for this answer, shown or not (while held, none is shown).
+    var hasReceived: Bool { !received.isEmpty }
 
     /// The stream ended with the backend's checked text. Usually that is exactly what
     /// was streamed. If it differs (a marker it removed, spacing it tidied), the part
     /// already on screen is rebuilt from the checked text; the rest flows on as usual.
     func finish(with text: String) {
+        // Closed: the shown lines are rebuilt from it when the capsule opens, not now.
+        if isHeld {
+            heldFinal = text
+            return
+        }
         let final = Array(text)
         // A passage numbered by itself now has its item: number everything shown again.
         let common = needsRenumber ? 0 : zip(received, final).prefix(while: { $0 == $1 }).count
@@ -143,6 +159,12 @@ final class AnswerReveal {
     /// Show a whole text at once, with no flow (a reopened capsule, a restored answer).
     /// `passages` maps each cited chunk id to its item.
     func show(_ text: String, passages: [Int: Int]) {
+        if isHeld {
+            heldShow = (text, passages)
+            heldFinal = nil
+            heldFlush = false
+            return
+        }
         stop()
         itemOf = passages
         needsRenumber = false
@@ -154,14 +176,50 @@ final class AnswerReveal {
         freezeAll()
     }
 
-    /// Stop pouring, and leave the text as it is (the capsule is closing).
-    func pause() {
+    /// The capsule is closing. Stop pouring and draw nothing more until `resume`: the
+    /// stream goes on, and its text is kept, but laying it out for a hidden capsule would
+    /// be work nobody sees (and the display link would wake 120 times a second for it).
+    func hold() {
+        isHeld = true
         stop()
     }
 
-    /// Let everything out now (the capsule is closing; there is no one to pour for).
-    func flush() {
-        guard running || revealed < received.count else { return }
+    /// The capsule is opening. Everything that arrived while it was closed shows at once,
+    /// fully drawn: it is laid out here, once, so the open's first layout has it and the
+    /// capsule opens at its full height. A finished answer is complete at once, and
+    /// `onDrained` is called before this returns (not on a later turn), so what it brings
+    /// in (the sources) is in the same first layout. An unfinished answer then goes on
+    /// pouring from rest, at its usual pace, as new pieces come.
+    func resume() {
+        guard isHeld else { return }
+        isHeld = false
+        if let held = heldShow {
+            heldShow = nil
+            show(held.text, passages: held.passages)
+            return
+        }
+        if let text = heldFinal {
+            heldFinal = nil
+            finish(with: text)
+        }
+        if inputDone || heldFlush {
+            heldFlush = false
+            flush(drainNow: true)
+            return
+        }
+        catchUp()
+    }
+
+    /// Let everything out now (a failure: what came stays, as it is). While the capsule
+    /// is closed, this waits for `resume`.
+    func flush(drainNow: Bool = false) {
+        if isHeld {
+            heldFlush = true
+            return
+        }
+        // Also when everything is out but the end was never announced: the close stopped
+        // the last characters' fade, so the tick that would have said so never came.
+        guard running || revealed < received.count || (inputDone && onDrained != nil) else { return }
         revealed = received.count
         shownAt = Array(repeating: 0, count: revealed)
         freezeFinishedLines(now: .infinity)
@@ -169,14 +227,39 @@ final class AnswerReveal {
         stop()
         if inputDone {
             freezeAll()
-            drained()
+            drained(now: drainNow)
         }
     }
+
+    /// The stream is still open: show what arrived while closed, fully drawn, then let
+    /// the tick take over again. It finishes any fade the close cut short, pours what comes
+    /// next from rest (the rate eases up from zero, as at the start of an answer) and
+    /// stops itself when there is nothing left.
+    private func catchUp() {
+        guard !received.isEmpty else { return }
+        let end = safeEnd()
+        if end > revealed {
+            shownAt.append(contentsOf: repeatElement(0, count: end - revealed))
+            revealed = end
+        }
+        let now = CACurrentMediaTime()
+        freezeFinishedLines(now: now)
+        renderLive(now: now)
+        rate = 0
+        carry = 0
+        startTicking()
+    }
+
+    /// Debug logs: how much arrived and how much is out (counts only, never the words).
+    var debugCounts: String { "\(revealed) of \(received.count) characters out\(inputDone ? ", complete" : "")" }
 
     /// Forget the text (a new question, or a preamble the model wrote before searching).
     /// A preamble keeps what the stream said about passages: they can still be cited.
     func reset(keepingPassages: Bool = false) {
         stop()
+        heldFinal = nil
+        heldShow = nil
+        heldFlush = false
         received = []
         revealed = 0
         shownAt = []
@@ -277,10 +360,11 @@ final class AnswerReveal {
     /// Tell the owner on the next turn of the main queue, not from inside the tick: what
     /// it does next (sources coming in) is an animated change, and made from inside a
     /// display-link callback, SwiftUI applied it without measuring the new height.
-    private func drained() {
+    private func drained(now: Bool = false) {
         guard let done = onDrained else { return }
         onDrained = nil
-        DispatchQueue.main.async { done() }
+        // `now`: on reopening, outside any tick, so the sources join the open's first layout.
+        if now { done() } else { DispatchQueue.main.async { done() } }
     }
 
     /// How far the screen may go: the end of the buffer, minus a marker that has only

@@ -585,7 +585,7 @@ private final class AnswerScrollState {
 
 /// Soft edges where the answer scrolls under them: a faint shade, nothing else. Each edge
 /// shows only when there is more answer beyond it, and grows with the distance. On the
-/// dark glass a light shade of black reads as the text passing under the edge, without
+/// glass a light shade of black reads as the text passing under the edge, without
 /// painting a black band that the glass would show.
 private struct EdgeFade: View {
     let scroll: AnswerScrollState

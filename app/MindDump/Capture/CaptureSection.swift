@@ -102,6 +102,6 @@ struct CaptureError: View {
 }
 
 extension CapsuleStyle {
-    /// Errors: a warm orange light enough to read on the dark glass.
+    /// Errors: a warm orange light enough to read on the glass over a dark window.
     static let warning = Color(red: 1, green: 0.66, blue: 0.32)
 }

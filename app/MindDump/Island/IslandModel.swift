@@ -144,6 +144,10 @@ final class IslandModel {
     /// Called just before the capsule starts to close, before the collapse is applied, so
     /// work that would land in the collapse's first frame can be stopped first.
     var onWillClose: (() -> Void)?
+    /// Called just before the capsule opens, before the open is applied, so content that
+    /// waited while it was closed (an answer that kept arriving) is in place for the open's
+    /// first layout, and the capsule takes its full height unseen.
+    var onWillOpen: (() -> Void)?
     /// Called for every transition, so the frame monitor can time it.
     var onTransition: ((String) -> Void)?
 
@@ -465,6 +469,7 @@ final class IslandModel {
     ) {
         let wasOpen = presentation.isOpen
         if wasOpen && !next.isOpen { onWillClose?() }
+        if !wasOpen && next.isOpen { onWillOpen?() }
         var capsule = capsule
         // Coming into view: it takes its size at once, unseen (see `CapsuleMetrics.arrives`).
         capsule.arrives = capsule.shown && !self.capsule.shown
