@@ -67,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         script?.drop = drop
         script?.onHotKey = { [weak self] edge in self?.hotKey.handle(edge) }
         DebugRemote.listen { [weak self] command in self?.debug(command) }
+        print("[motion] tuning \(IslandMotion.tuning.rawValue)")
         // A whole answer stream is timed as one span, not line by line.
         ask.onStream = { [weak self] name in
             if let name { self?.frames?.beginSpan(name) } else { self?.frames?.endSpan() }
@@ -232,15 +233,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hotKey.handle(.pressed)
             hotKey.handle(.released)
         case "close": island.close()
-        case "saved": island.show(IslandActivity(id: "debug", glyph: .check, text: "Saved"))
-        case "reading":
-            island.show(IslandActivity(id: "debug", glyph: .spinner, text: "Reading page", hold: nil))
-        case "ready": island.show(IslandActivity(id: "debug", glyph: .check, text: "Ready"))
-        case "failed":
-            island.show(IslandActivity(id: "debug", glyph: .warning, text: "Couldn't read page", hold: 3))
+        case "saved", "reading", "ready", "failed":
+            if let activity = DebugRemote.pill(command) { island.show(activity) }
         case "film": film?.film()
         case "snap": film?.snap()
         case "script": script?.run()
+        case let tuning where tuning.hasPrefix("tuning-"):
+            IslandMotion.switchTuning(to: String(tuning.dropFirst("tuning-".count)))
         default: break
         }
     }

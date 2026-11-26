@@ -184,6 +184,30 @@ struct IslandShoulder: Shape {
     }
 }
 
+/// Both shoulders of the body, drawn outside its sides: a square of side `radius` beside
+/// each top corner, overlapping the body by half a point so no hairline seam shows. The
+/// radius animates here, and anything at or below zero draws nothing: an underdamped
+/// spring swings a shrinking radius a little past zero before it settles.
+struct IslandShoulders: Shape {
+    var radius: CGFloat
+
+    var animatableData: CGFloat {
+        get { radius }
+        set { radius = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let side = radius
+        guard side > 0.01 else { return Path() }
+        var path = Path()
+        let leading = CGRect(x: rect.minX - side + 0.5, y: rect.minY, width: side, height: side)
+        let trailing = CGRect(x: rect.maxX - 0.5, y: rect.minY, width: side, height: side)
+        path.addPath(IslandShoulder(leading: true).path(in: leading))
+        path.addPath(IslandShoulder(leading: false).path(in: trailing))
+        return path
+    }
+}
+
 /// The capsule's outline: fully round while it is one line, a card with 27-point corners
 /// once it is taller. The corner comes from the height in every frame, so a capsule that
 /// grows into a card never shows a corner that does not fit its size.

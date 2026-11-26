@@ -83,6 +83,9 @@ final class IslandModel {
     private(set) var motion: IslandMotion = .settle
     /// True while the pointer is held down on the island: the body swells a little.
     var isPressed = false
+    /// Counts in-place changes of a pill ("Saved" to "Reading page"). The view blurs the
+    /// pill's words and glyph once per change, while its width moves (`IslandMotion.morphBlur`).
+    private(set) var morphPulse = 0
 
     var layout: IslandLayout {
         didSet {
@@ -289,6 +292,7 @@ final class IslandModel {
         if case .compact(let current) = presentation, current.id == activity.id {
             // Same pill, new words ("Saved" to "Reading"): change in place.
             go(.compact(activity), with: .settle, name: "pill-update", hold: activity.hold)
+            if !reduceMotion { morphPulse += 1 }
             return
         }
         if fromLarge && !reduceMotion {

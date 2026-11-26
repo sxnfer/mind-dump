@@ -96,8 +96,20 @@ enum DebugRemote {
     static let commands = [
         "peek", "unpeek", "open", "close", "saved", "reading", "ready", "failed", "film", "snap", "script",
         "keystate", "resignkey", "hotkey",
-    ]
+    ] + IslandMotion.Tuning.allCases.map { "tuning-\($0.rawValue)" }
     private static let prefix = "io.github.sxnfer.MindDump.debug."
+
+    /// The test pills, by name (`saved`, `reading`, `ready`, `failed`). They share one id,
+    /// so `reading` then `ready` changes one pill in place.
+    static func pill(_ name: String) -> IslandActivity? {
+        switch name {
+        case "saved": IslandActivity(id: "debug", glyph: .check, text: "Saved")
+        case "reading": IslandActivity(id: "debug", glyph: .spinner, text: "Reading page", hold: nil)
+        case "ready": IslandActivity(id: "debug", glyph: .check, text: "Ready")
+        case "failed": IslandActivity(id: "debug", glyph: .warning, text: "Couldn't read page", hold: 3)
+        default: nil
+        }
+    }
 
     @MainActor private static var handler: ((String) -> Void)?
 
@@ -288,6 +300,10 @@ final class FilmRecorder {
 ///     dragfile <path>           a drag carrying this one file arrives (several paths,
 ///                               separated by " | ", make a drag of several files)
 ///     dropfile [<path>]         release a file drag; no path: the one over it
+///     pill saved | reading | ready | failed
+///                               show a test pill (as the Darwin notifications do)
+///     openwaiting               open the capsule without the keyboard (as a failed drop)
+///     release                   a drop target let go, then "Saved", with no save behind it
 ///     keystate                  print who holds the keyboard ([script] keystate: …)
 ///     resignkey                 the window loses the keyboard, as when another app takes it
 ///     hotkey [down | up]        the global shortcut, from just after the system delivers
@@ -299,7 +315,11 @@ final class FilmRecorder {
 ///                               editor wraps at
 ///     measure typing            time the next 1.3 s under this name
 ///     wait 0.5                  seconds, in animation time
-///     film | snap               start a reel / take one still of the app's window
+///     film [count] [seconds]    start a reel (20 frames over 0.8 s of animation time by
+///                               default) / take one still of the app's window
+///     snap
+///     tuning calm | springy | drastic
+///                               switch the springs from the next transition on
 ///     backdrop white | dark | busy | off
 ///                               a window of ours behind the island, to see the glass over
 ///                               a bright page, a dark one, or a busy picture
@@ -379,7 +399,23 @@ final class DebugScript {
             if rest == "cmd-n" { key("n", code: 45, modifiers: .command) }
         case "wait":
             try? await Task.sleep(for: IslandMotion.seconds(Double(rest) ?? 0.5))
-        case "film": film.film()
+        case "film":
+            // `film 40 1.6`: more frames over a longer span, for the slower tunings.
+            let numbers = rest.split(separator: " ").compactMap { Double($0) }
+            film.film(count: numbers.first.map { max(Int($0), 2) } ?? 20, seconds: numbers.dropFirst().first ?? 0.8)
+        case "tuning":
+            IslandMotion.switchTuning(to: rest)
+        case "pill":
+            if let activity = DebugRemote.pill(rest) { island.show(activity) } else { print("[script] unknown pill: \(rest)") }
+        case "openwaiting":
+            // Opens as a failed drop does: the capsule comes out but never takes the
+            // keyboard, so a slow-motion film of it cannot catch anyone's typing.
+            island.open(by: .system)
+        case "release":
+            // The island's side of a drop, with no save behind it: the target is let go,
+            // then the "Saved" pill a save would show. Same transition as a real release.
+            island.dropTargetReleased()
+            if let activity = DebugRemote.pill("saved") { island.show(activity) }
         case "snap": film.snap()
         case "shot": film.shot()
         case "backdrop": DebugBackdrop.show(rest, under: window)
