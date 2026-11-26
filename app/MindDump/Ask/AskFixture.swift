@@ -5,7 +5,9 @@ import Foundation
 ///
 /// Start the app with `MD_ASK_FIXTURE=1` and every question gets a scripted stream
 /// with real-world timing: a pause to think, a search, then the answer in uneven pieces
-/// (some split in the middle of a `[c:…]` marker), then `final`. Which script plays
+/// (some split in the middle of a `[c:…]` marker), then `final`. Like the backend, it
+/// announces the passages the answer may cite ("passages") after the search and, in a
+/// follow-up, at the start, before any text cites them. Which script plays
 /// depends on a word in the question:
 ///
 ///     long     a long answer that passes the capsule's maximum height
@@ -13,7 +15,9 @@ import Foundation
 ///     fail     a few sentences, then an "error" event mid-stream
 ///     limit    a 429 before the stream starts (rate limit)
 ///     key      a 503 before the stream starts (no Claude key)
-///     anything else: a short grounded answer with two sources
+///     anything else: a short grounded answer citing three passages of two items (two
+///              passages of the Kettlebrook manual, one of the grinder note), so it
+///              shows two sources
 struct AskFixture: AnswerSource {
     func answer(
         _ text: String, conversation: Int?,
@@ -23,11 +27,20 @@ struct AskFixture: AnswerSource {
         if question.contains("limit") { throw APIClient.AskError.tooMany(retryAfter: 23) }
         if question.contains("key") { throw APIClient.AskError.noKey }
 
+        let script: Script =
+            question.contains("long") ? .long
+            : question.contains("nothing") ? .notFound
+            : question.contains("fail") ? .failing
+            : .short
+
         try await pause(0.5)
+        // A follow-up: the passages of earlier turns may be cited again, so they come first.
+        if conversation != nil { await onEvent(.passages(script.passages)) }
         await onEvent(.status(.thinking))
         try await pause(0.7)
         await onEvent(.status(.searching(question.contains("long") ? "Lisbon trip plan" : "grinder espresso setting")))
         try await pause(0.6)
+        await onEvent(.passages(script.passages))  // what the search handed over
         if question.contains("long") {
             await onEvent(.status(.reading(5)))
             try await pause(0.5)
@@ -35,11 +48,6 @@ struct AskFixture: AnswerSource {
         await onEvent(.status(.thinking))
         try await pause(0.6)
 
-        let script: Script =
-            question.contains("long") ? .long
-            : question.contains("nothing") ? .notFound
-            : question.contains("fail") ? .failing
-            : .short
         var generator = SystemRandomNumberGenerator()
         var rest = Substring(script.streamed)
         while !rest.isEmpty {
@@ -68,6 +76,19 @@ struct AskFixture: AnswerSource {
     private enum Script: Equatable {
         case short, long, notFound, failing
 
+        /// The passages the search hands over: every one the answer cites, and a couple
+        /// it does not. The long answer's [c:99] is never announced (and the backend then
+        /// removes it), as for a marker the model made up.
+        var passages: [APIClient.Passage] {
+            let pairs: [(Int, Int)] =
+                switch self {
+                case .short, .failing: [(5, 5), (31, 12), (34, 12), (40, 13)]
+                case .long: [(6, 6), (7, 7), (8, 8)]
+                case .notFound: [(6, 6), (8, 8)]
+                }
+            return pairs.map { APIClient.Passage(chunkId: $0.0, itemId: $0.1) }
+        }
+
         /// What the stream sends. The long one cites a passage the backend then rejects
         /// ([c:99]), so the final text differs from the streamed one, as it can for real.
         var streamed: String {
@@ -75,7 +96,8 @@ struct AskFixture: AnswerSource {
             case .short, .failing:
                 "Set the Kettlebrook K2 to step 6 for espresso [c:5]. For an AeroPress go much coarser, to step 14, "
                     + "and for a French press to step 24 [c:5].\n\nClean the burrs every two weeks with grinder "
-                    + "tablets, or the espresso starts to taste flat [c:5][c:31]."
+                    + "tablets [c:31], then grind a few beans to clear the dust before the first cup [c:34]. Oily "
+                    + "beans leave more behind, so clean more often if you use them [c:31][c:34]."
             case .long:
                 "Your Lisbon trip runs from 12 to 16 March, and you are staying in Alfama [c:6]. The plan has three "
                     + "fixed points.\n\nFirst, the day trip to Sintra is on the 14th. You take the train from Rossio "
@@ -105,6 +127,11 @@ struct AskFixture: AnswerSource {
                 url: "https://example.com/kettlebrook/k2-manual", page: 4,
                 quote: "Coffee oils build up on the burrs. Clean them every two weeks, or more often with oily beans."
             )
+            let manualRinse = APIClient.Citation(
+                marker: "[c:34]", chunkId: 34, itemId: 12, type: "link", title: "Kettlebrook K2 manual",
+                url: "https://example.com/kettlebrook/k2-manual", page: 9,
+                quote: "After cleaning, grind about ten grams of beans and throw them away, to clear the tablet dust."
+            )
             let trip = APIClient.Citation(
                 marker: "[c:6]", chunkId: 6, itemId: 6, type: "note", title: "Lisbon trip plan", url: nil, page: nil,
                 quote: "Lisbon trip plan, 12 to 16 March: stay in Alfama, day trip to Sintra on the 14th by train "
@@ -118,7 +145,7 @@ struct AskFixture: AnswerSource {
             switch self {
             case .short, .failing:
                 return APIClient.Answer(
-                    conversationId: conversation, text: streamed, citations: [grinder, manual],
+                    conversationId: conversation, text: streamed, citations: [grinder, manual, manualRinse],
                     grounded: true, incomplete: false
                 )
             case .long:

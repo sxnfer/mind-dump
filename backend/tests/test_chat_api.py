@@ -11,7 +11,16 @@ from dataclasses import replace
 from decimal import Decimal
 
 import pytest
-from chat_helpers import Conn, add_doc, add_usage, context, count, rechunk, sse_events
+from chat_helpers import (
+    Conn,
+    add_doc,
+    add_usage,
+    check_announced_first,
+    context,
+    count,
+    rechunk,
+    sse_events,
+)
 from fastapi.testclient import TestClient
 
 from mind_dump import conversations as convs
@@ -212,6 +221,45 @@ def test_streaming_sends_status_deltas_and_the_same_final_answer(
         headers={"accept": "text/event-stream"},
     )
     assert sse_events(r.text)[-1][0] == "final"
+
+
+def test_passages_are_announced_before_the_text_cites_them(
+    client: TestClient, conn: Conn, llm: ScriptedLLM, doc: dict
+) -> None:
+    """The app numbers its sources by item while the text streams; it can only keep the
+    numbers fixed if it knows each passage's item before a marker for it arrives."""
+    second, (other_chunk,) = add_doc(conn, ["The buffer pool is audited yearly."], "Audits")
+    llm.steps = [
+        tool_turn(("search", {"query": "buffer pool"})),
+        text_turn(
+            f"Ten to twenty percent go to the pool. [c:{doc['chunks'][1]}] It is audited "
+            f"every year. [c:{other_chunk}]"
+        ),
+    ]
+    events = sse_events(client.post("/ask?stream=true", json={"question": "Pool?"}).text)
+    kinds = [k for k, _ in events]
+    assert kinds[-1] == "final" and "passages" in kinds
+    # A first question has no earlier passages: the first announcement follows the search.
+    assert kinds.index("status") < kinds.index("passages") < kinds.index("delta")
+    announced = check_announced_first(events)
+    assert announced[doc["chunks"][1]] == doc["item"] and announced[other_chunk] == second
+    final = events[-1][1]
+    # "final" is unchanged: one citation per passage, as D38 defines them.
+    assert [c["chunk_id"] for c in final["citations"]] == [doc["chunks"][1], other_chunk]
+
+    # A follow-up that cites a passage from the first turn, with no tool call: the
+    # earlier passages are announced at the start, before any text.
+    llm.steps = [text_turn(f"As before, ten to twenty. [c:{doc['chunks'][1]}]")]
+    r = client.post(
+        f"/conversations/{final['conversation_id']}/messages?stream=true", json={"text": "Again?"}
+    )
+    events = sse_events(r.text)
+    kinds = [k for k, _ in events]
+    assert kinds[0] == "passages" and kinds.index("passages") < kinds.index("delta")
+    announced = check_announced_first(events)
+    assert doc["chunks"][1] in announced and other_chunk in announced
+    assert events[-1][0] == "final" and events[-1][1]["grounded"]
+    assert [c["chunk_id"] for c in events[-1][1]["citations"]] == [doc["chunks"][1]]
 
 
 def test_a_failure_mid_stream_sends_an_error_and_saves_nothing(

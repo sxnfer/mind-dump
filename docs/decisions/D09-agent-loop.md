@@ -16,3 +16,5 @@ Why:
 - Rejected: the SDK's Tool Runner helper (it hides the loop San needs to explain, and it is a beta surface); Anthropic's Managed Agents (Anthropic hosts the loop and a sandbox, which suits agents that need a workspace; ours needs only two database reads, and each owner would have to create hosted agent resources); an agent framework (a large dependency to wrap one loop).
 Cost: we own the loop's edge cases: several tool calls in one turn, tool errors, the turn limit, and every stop reason (`tool_use`, `end_turn`, `max_tokens`, `refusal`, `pause_turn`).
 We will switch if: the agent needs many tools, long-running work or a sandbox.
+
+Amended 2026-11-26, at San's request: answers are flowing prose. The system prompt asks for full sentences in one to three short paragraphs, with no lists, headings, bold or other markup; steps or several items are written as a sentence. Lists and markup looked busy in the capsule, which shows the text as it comes. The answers eval reports how many answers hold to this ("Written as flowing prose"); it does not decide whether a question passes.

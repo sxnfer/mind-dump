@@ -21,6 +21,9 @@ What it does, in order:
        expected   at least one citation is a chunk of the expected document that holds
                   the expected passage
        facts      the answer states every key fact (one spelling of each)
+       prose      the answer is flowing prose, as SYSTEM_PROMPT asks: no line starts
+                  with a list or heading marker, and no bold or code markup. Reported
+                  beside the other checks; it does not decide whether a question passes
        supported  with a real model only: one judge call per citation asks whether the
                   cited passage supports the sentence it is attached to (yes or no, with
                   a one-line reason, as structured output)
@@ -185,6 +188,19 @@ def claims(text: str) -> list[tuple[str, list[int]]]:
     return out
 
 
+# A line that starts like a list item or a heading: "-", "*", "•", "1." or "1)", "#".
+# A marker is followed by a space, and a number has one or two digits, so a line that
+# starts "-5 degrees" or "2024. The" still counts as prose.
+_LIST_OR_HEADING = re.compile(r"^\s*(?:[-*•]\s|\d{1,2}[.)]\s|#)", re.MULTILINE)
+_MARKUP = ("**", "__", "`")
+
+
+def is_prose(text: str) -> bool:
+    """Does the answer hold to the format (D9, amended 2026-11-26): flowing sentences,
+    no list, no heading, no bold or code markup. Citation markers are not markup."""
+    return not _LIST_OR_HEADING.search(text) and not any(m in text for m in _MARKUP)
+
+
 def states(text: str, spellings: Sequence[str]) -> bool:
     plain = MARKER.sub("", text).lower()
     return any(s.lower() in plain for s in spellings)
@@ -199,6 +215,7 @@ class Checked:
     valid: bool = False  # no invalid citation
     expected: bool | None = None  # answerable only
     missing_facts: list[str] = field(default_factory=list)
+    prose: bool | None = None  # None: no answer (the call failed)
     supported: list[tuple[str, bool | None, str]] | None = None  # (marker, verdict, reason)
     error: str | None = None
 
@@ -225,6 +242,7 @@ def check(
         grounded=answer["grounded"],
         incomplete=answer["incomplete"],
         valid=not answer["invalid_citations"],
+        prose=is_prose(answer["text"]),
     )
     if q.answerable:
         c.expected = any(
@@ -349,6 +367,8 @@ def summary_lines(report: AnswersReport) -> list[str]:
         f"- All citations valid: {n(ans + una, lambda r: r.valid and r.error is None)}",
         f"- A citation points at the expected passage: {n(ans, lambda r: r.expected)}",
         f"- States the key facts: {n(ans, lambda r: r.facts)}",
+        f"- Written as flowing prose (no list, heading or markup): "
+        f"{n(ans + una, lambda r: r.prose)}",
         f"- Unanswerable questions answered as not grounded: {n(una, lambda r: r.passed)}",
     ]
     if report.judged:
@@ -370,16 +390,16 @@ def format_report(report: AnswersReport) -> str:
         lines.append("QUESTION SET ERROR: these passages are not inside one chunk:")
         lines += [f"  Q{q.id} ({q.document}): {q.passage!r}" for q in report.unfindable]
     lines += ["", *summary_lines(report), ""]
-    lines.append(f"{'#':>4}  {'pass':<4}  valid  expected  facts  supported  question")
+    lines.append(f"{'#':>4}  {'pass':<4}  valid  expected  facts  supported  prose  question")
     for r in report.results:
         lines.append(
             f"{r.question.id:>4}  {'yes' if r.passed else 'NO':<4}  {_mark(r.valid):<5}  "
             f"{_mark(r.expected):<8}  {_mark(r.facts):<5}  {_supported(r):<9}  "
-            f"{r.question.question}"
+            f"{_mark(r.prose):<5}  {r.question.question}"
         )
         if r.error:
             lines.append(f"      error: {r.error}")
-        elif not r.passed:
+        elif not r.passed or r.prose is False:
             if r.missing_facts:
                 lines.append(f"      missing facts: {', '.join(r.missing_facts)}")
             for marker, verdict, reason in r.supported or []:
@@ -402,13 +422,14 @@ def answers_markdown(report: AnswersReport, commit: str, when: datetime) -> str:
         f"{report.model_calls} model calls, estimated cost ${report.cost_usd:.4f}",
         *summary_lines(report),
         "",
-        "| # | Pass | Valid | Expected passage | Facts | Supported | Question |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| # | Pass | Valid | Expected passage | Facts | Supported | Prose | Question |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for r in report.results:
         lines.append(
             f"| {r.question.id} | {'yes' if r.passed else 'no'} | {_mark(r.valid)} | "
-            f"{_mark(r.expected)} | {_mark(r.facts)} | {_supported(r)} | {r.question.question} |"
+            f"{_mark(r.expected)} | {_mark(r.facts)} | {_supported(r)} | {_mark(r.prose)} | "
+            f"{r.question.question} |"
         )
     return "\n".join(lines) + "\n"
 

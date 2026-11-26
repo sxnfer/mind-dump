@@ -15,3 +15,5 @@ Why:
 - Rejected: trusting the model's own list of sources (it can cite something it never read); the API's built-in citations feature (it ties the format to one provider and does not work together with structured outputs).
 Cost: a marker says which passage, not which words in it. A valid citation proves the passage was retrieved, not that it supports the sentence; the answers eval's judge checks that.
 We will switch if: the eval shows cited passages often do not support their claims.
+
+Amended 2026-11-26, at San's request: citations stay one per passage, as above, in the JSON answer and in `final`. The app shows one source per item: every passage of a note, link or file shares one number, one row and one link, and opening the row shows each cited passage once. So that a number never changes once it is on screen, the stream announces each passage's item before the text can cite it: a `passages` event with `chunk_id` and `item_id` pairs, at the start for passages of earlier turns, then after each tool result. Without it the app would learn the items only in `final`, after the text had streamed, and would have to renumber in front of the owner. API 0.8.0.

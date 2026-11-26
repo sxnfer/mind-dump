@@ -96,7 +96,9 @@ curl -sN "localhost:8000/conversations/1/messages?stream=true" -H 'content-type:
   -d '{"text": "Give an example"}'                              # streamed: Server-Sent Events
 ```
 
-- Streaming (`?stream=true` or `Accept: text/event-stream`) sends `status` events (thinking, searching with the query, reading an item), `delta` events with the answer's text as it comes, then `final` with the same JSON as the plain call, or `error`. Nothing is saved unless `final` arrives.
+- Answers are short flowing prose (no lists or headings), with a marker such as `[c:12]` after each sentence that comes from a passage. `citations` lists one entry per cited passage.
+- Streaming (`?stream=true` or `Accept: text/event-stream`) sends `status` events (thinking, searching with the query, reading an item), `passages` events, `delta` events with the answer's text as it comes, then `final` with the same JSON as the plain call, or `error`. Nothing is saved unless `final` arrives.
+- A `passages` event lists the passages the model may cite from now on, as `{"passages": [{"chunk_id": 412, "item_id": 37}]}`: at the start of a follow-up for those of earlier turns, then after each tool result. It always comes before any `delta` that cites them, so a client can number sources by item while the text streams.
 - Discuss a citation: start a chat about one item and passage, then send messages to it. Every search in it is limited to that item by our code, and the first message carries the passage and the ones just before and after it.
 
 ```bash
@@ -160,7 +162,7 @@ Right-click the notch or the capsule to quit. The app is unsigned (see `docs/dec
 
 ## Develop the Mac app
 
-The app is a black "island" that hangs from the notch, and a Liquid Glass capsule that appears just under it, in place (`app/MindDump/Island/`, `app/MindDump/Panel/CapsuleView.swift`). The window never moves; only the two shapes change inside it: the island on springs, the capsule by a short fade and a 4% scale from its top edge. The capsule has two modes, Capture and Ask (the round button or Tab flips them). Ask streams an answer with numbered sources from `POST /ask` (`app/MindDump/Ask/`), and the capsule grows into a card for it. Text, or one PDF, PNG or JPEG file, dragged onto the notch is saved when you let go (`app/MindDump/Capture/DropModel.swift`; a file goes to `POST /items/upload`).
+The app is a black "island" that hangs from the notch, and a Liquid Glass capsule that appears just under it, in place (`app/MindDump/Island/`, `app/MindDump/Panel/CapsuleView.swift`). The window never moves; only the two shapes change inside it: the island on springs, the capsule by a short fade and a 4% scale from its top edge. The capsule has two modes, Capture and Ask (the round button or Tab flips them). Ask streams an answer with numbered sources from `POST /ask` (`app/MindDump/Ask/`), and the capsule grows into a card for it. Sources are numbered by item: two passages of one note share its number and its row, and opening the row shows both quotes, each with its page for a PDF. Text, or one PDF, PNG or JPEG file, dragged onto the notch is saved when you let go (`app/MindDump/Capture/DropModel.swift`; a file goes to `POST /items/upload`).
 
 Debug builds carry these aids, mostly in `app/MindDump/Support/Debug.swift`:
 
@@ -181,7 +183,7 @@ The motion comes in three tunings (`IslandMotion.Tuning`): `calm` (the iPhone's 
 
 Each transition prints a line such as `[frames] open: 156 frames, median 8.33 ms (120 Hz), worst 8.33 ms, late 0`. A late frame is a dropped frame. A whole answer stream is timed as one line, `[frames] stream: …`.
 
-The canned answers pick a script from a word in the question: `long` (passes the card's height), `nothing` (not from your items), `fail` (an error mid-stream), `limit` (429), `key` (no Claude key); anything else gets a short answer with two sources.
+The canned answers pick a script from a word in the question: `long` (passes the card's height), `nothing` (not from your items), `fail` (an error mid-stream), `limit` (429), `key` (no Claude key); anything else gets a short answer that cites two passages of one item and one of another, so it shows two sources.
 
 `script` plays `<app temp folder>/script.txt`, one step per line: `pointer notch|away`, `click` (the notch), `click away`, `click <control>` (`mode`, `send`, `new-question`, `source-1`, `open-1`, …), `type …`, `key return|escape|tab|cmd-n`, `scroll <points>`, `drag <text>`, `dragfile <path>`, `dragexit`, `drop`, `dropfile`, `measure <name>`, `wait <s>`, `film [frames] [seconds]`, `snap`, `tuning calm|springy|drastic`, `pill saved|reading|ready|failed`, `openwaiting` (the capsule without the keyboard), `release` (a drop target let go, then "Saved", with no save), `backdrop white|dark|busy|off` (a window of ours behind the capsule) and `shot` (a still of the screen there, to see the glass), `boxsize`, `keystate`, `resignkey`, `hotkey [down|up]` (the global shortcut, from just after the system delivers it), `quit`. The full list is at the top of `DebugScript` in `Debug.swift`.
 

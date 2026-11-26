@@ -15,7 +15,11 @@ import SwiftUI
 /// Three more jobs:
 /// - Citation markers like `[c:12]` never show. A marker is let out whole or not at all,
 ///   and a half-arrived `[c:1` at the end of the buffer waits for the rest.
-/// - Each marker becomes a small reference number (1, 2, 3 by first appearance).
+/// - Each marker becomes a small reference number (1, 2, 3 by first appearance). The
+///   number belongs to the item (a note, a link, a file), not the passage: two passages
+///   of one note are both "1", and "1" shows once where a sentence cites both. The stream
+///   says which item each passage belongs to before the text cites it (`learn`), so a
+///   number never changes once it is on screen.
 /// - Only the last line or two change while text flows. Finished lines are built once and
 ///   frozen, so each tick lays out a few dozen characters, not the whole answer.
 @MainActor
@@ -45,8 +49,21 @@ final class AnswerReveal {
     private(set) var hasText = false
     var isEmpty: Bool { !hasText }
 
-    /// Chunk id to the number shown for it, by first appearance in the text.
-    @ObservationIgnored private(set) var references: [Int: Int] = [:]
+    /// What a number stands for: an item, once the stream has said which item the
+    /// passage belongs to. A passage it never announced (it should not happen) is
+    /// numbered by itself until `final` names its item.
+    private enum Key: Hashable {
+        case item(Int)
+        case passage(Int)
+    }
+
+    /// Key to the number shown for it, by first appearance in the text.
+    @ObservationIgnored private var references: [Key: Int] = [:]
+    /// Chunk id to item id, from the stream's "passages" events and then `final`.
+    @ObservationIgnored private var itemOf: [Int: Int] = [:]
+    /// A passage numbered by itself has since been given its item: at `finish` the shown
+    /// text is numbered again, so it shares its item's number.
+    @ObservationIgnored private var needsRenumber = false
     /// Called once when the stream has ended and every character is on screen.
     @ObservationIgnored var onDrained: (() -> Void)?
     /// The view whose screen the display link follows. The link is made here, paused,
@@ -83,6 +100,20 @@ final class AnswerReveal {
 
     // MARK: Input
 
+    /// The item of each passage the text may cite (the stream's "passages" event, or the
+    /// checked citations in `final`). Learned before the text that cites them arrives.
+    func learn(_ passages: [(chunk: Int, item: Int)]) {
+        for (chunk, item) in passages where itemOf[chunk] != item {
+            if references[.passage(chunk)] != nil { needsRenumber = true }
+            itemOf[chunk] = item
+        }
+    }
+
+    /// The number shown for a passage's markers, if the text has shown one.
+    func number(ofChunk chunk: Int) -> Int? {
+        references[Self.key(chunk, itemOf)]
+    }
+
     /// More text from the stream.
     func append(_ piece: String) {
         received.append(contentsOf: piece)
@@ -94,7 +125,9 @@ final class AnswerReveal {
     /// already on screen is rebuilt from the checked text; the rest flows on as usual.
     func finish(with text: String) {
         let final = Array(text)
-        let common = zip(received, final).prefix(while: { $0 == $1 }).count
+        // A passage numbered by itself now has its item: number everything shown again.
+        let common = needsRenumber ? 0 : zip(received, final).prefix(while: { $0 == $1 }).count
+        needsRenumber = false
         if revealed > common {
             // Map the reveal point into the new text: same distance from the end.
             let point = max(common, min(final.count, revealed - (received.count - final.count)))
@@ -108,8 +141,11 @@ final class AnswerReveal {
     }
 
     /// Show a whole text at once, with no flow (a reopened capsule, a restored answer).
-    func show(_ text: String) {
+    /// `passages` maps each cited chunk id to its item.
+    func show(_ text: String, passages: [Int: Int]) {
         stop()
+        itemOf = passages
+        needsRenumber = false
         received = Array(text)
         inputDone = true
         rebuild(upTo: received.count, keepingUpTo: 0, now: CACurrentMediaTime())
@@ -138,7 +174,8 @@ final class AnswerReveal {
     }
 
     /// Forget the text (a new question, or a preamble the model wrote before searching).
-    func reset() {
+    /// A preamble keeps what the stream said about passages: they can still be cited.
+    func reset(keepingPassages: Bool = false) {
         stop()
         received = []
         revealed = 0
@@ -148,6 +185,8 @@ final class AnswerReveal {
         rate = 0
         carry = 0
         references = [:]
+        if !keepingPassages { itemOf = [:] }
+        needsRenumber = false
         frozen = []
         live = []
         hasText = false
@@ -157,7 +196,7 @@ final class AnswerReveal {
     /// The answer as plain words, with references as [1], [2] (for copy and VoiceOver).
     var plainText: String {
         var numbers = references
-        return Self.parse(received[0..<revealed], references: &numbers).map(\.text).joined()
+        return Self.parse(received[0..<revealed], items: itemOf, references: &numbers).map(\.text).joined()
     }
 
     // MARK: The tick
@@ -266,7 +305,7 @@ final class AnswerReveal {
             frozen.append(
                 Line(
                     id: frozen.count,
-                    text: Self.attributed(slice, shownAt: nil, now: now, references: &references),
+                    text: Self.attributed(slice, shownAt: nil, now: now, items: itemOf, references: &references),
                     isGap: slice.isEmpty, isPending: false, end: newline
                 )
             )
@@ -286,7 +325,7 @@ final class AnswerReveal {
             lines.append(
                 Line(
                     id: id,
-                    text: Self.attributed(slice, shownAt: shownAt, now: now, references: &references),
+                    text: Self.attributed(slice, shownAt: shownAt, now: now, items: itemOf, references: &references),
                     isGap: slice.isEmpty && newline != nil,
                     isPending: slice.isEmpty && newline == nil,
                     end: stop
@@ -309,7 +348,7 @@ final class AnswerReveal {
         frozen = Array(frozen.prefix { $0.end < common })
         liveStart = frozen.last.map { $0.end + 1 } ?? 0
         references = [:]
-        _ = Self.parse(received[0..<liveStart], references: &references)
+        _ = Self.parse(received[0..<liveStart], items: itemOf, references: &references)
         revealed = point
         shownAt = Array(repeating: 0, count: point)
         freezeFinishedLines(now: .infinity)
@@ -334,21 +373,34 @@ final class AnswerReveal {
     static let ink = Color.white.opacity(0.9)
     static let accent = Color(red: 0.62, green: 0.72, blue: 1.0).opacity(0.78)
 
+    private static func key(_ chunk: Int, _ items: [Int: Int]) -> Key {
+        items[chunk].map(Key.item) ?? .passage(chunk)
+    }
+
     /// Characters to pieces: plain runs and references. A space before a reference is
     /// dropped, so "batch [c:1]." reads "batch¹." with the number tucked against the word.
-    private static func parse(_ chars: ArraySlice<Character>, references: inout [Int: Int]) -> [Piece] {
+    /// Markers side by side that come to the same number (two passages of one item)
+    /// show it once: "[c:31][c:34]" is "²", not "²,²".
+    private static func parse(
+        _ chars: ArraySlice<Character>, items: [Int: Int], references: inout [Key: Int]
+    ) -> [Piece] {
         var pieces: [Piece] = []
         var run = ""
         var runStart = chars.startIndex
         var index = chars.startIndex
+        var group = Set<Int>()  // the numbers of the references side by side so far
         while index < chars.endIndex {
             if let end = markerEnd(in: chars, at: index), let id = Int(String(chars[(index + 3)..<(end - 1)])) {
                 if run.hasSuffix(" ") { run.removeLast() }
-                if !run.isEmpty { pieces.append(.text(run, start: runStart)) }
+                if !run.isEmpty {
+                    pieces.append(.text(run, start: runStart))
+                    group = []
+                }
                 run = ""
-                let number = references[id] ?? (references.count + 1)
-                references[id] = number
-                pieces.append(.reference(number, start: index))
+                let key = key(id, items)
+                let number = references[key] ?? (references.count + 1)
+                references[key] = number
+                if group.insert(number).inserted { pieces.append(.reference(number, start: index)) }
                 index = end
                 runStart = end
             } else {
@@ -366,7 +418,7 @@ final class AnswerReveal {
     /// Opacity is rounded to tenths, so a fading tail is at most a few runs.
     private static func attributed(
         _ chars: ArraySlice<Character>, shownAt: [CFTimeInterval]?, now: CFTimeInterval,
-        references: inout [Int: Int]
+        items: [Int: Int], references: inout [Key: Int]
     ) -> AttributedString {
         var result = AttributedString()
         let fade = Self.fade * IslandMotion.timeScale
@@ -375,7 +427,7 @@ final class AnswerReveal {
             return (min(1, max(0, (now - shownAt[index]) / fade)) * 10).rounded() / 10
         }
         var previousWasReference = false
-        for piece in parse(chars, references: &references) {
+        for piece in parse(chars, items: items, references: &references) {
             switch piece {
             case .text(let string, let start):
                 var index = start
