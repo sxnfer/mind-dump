@@ -51,8 +51,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         window.onClaimEnded = { [weak self] in self?.caretToEnd() }
         listenForKeyboardLoss(window)
-        // Closing stops an answer still on its way (the backend then saves nothing).
+        // Closing never stops an answer: it keeps arriving while the capsule is closed,
+        // and the next open shows it where it has got to (San, 2026-11-27).
         island.onWillClose = { [weak self] in self?.ask.panelWillClose() }
+        island.onWillOpen = { [weak self] in self?.ask.panelWillOpen() }
         ask.reveal.linkView = window.contentView
         listenForPanelKeys()
         hotKey.onPress = { [weak self] in self?.shortcutPressed() }

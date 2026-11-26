@@ -376,7 +376,7 @@ private struct SendButton: View {
         .animation(.easeOut(duration: 0.15), value: ready)
         .debugTarget("send")
         .accessibilityLabel("Ask")
-        .help(ask.isBusy ? "Answering · Esc stops" : "Ask (Return)")
+        .help(ask.isBusy ? "Answering · ⌘N stops" : "Ask (Return)")
     }
 }
 
