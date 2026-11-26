@@ -94,6 +94,8 @@ struct IslandView: View {
                     .transition(transition)
             }
         }
+        // A pill that changes in place blurs once while its width moves (calm: never).
+        .modifier(MorphBlur(pulse: island.morphPulse, peak: island.motion.morphBlur))
         // Content is laid out at its final size from the first frame; the growing body
         // reveals it. Text never reflows while the shape is moving.
         .frame(width: contentWidth, alignment: .top)
@@ -127,7 +129,10 @@ struct IslandView: View {
     /// the open. Hidden, it costs nothing; shown, it is already built.
     private var capsuleLayer: some View {
         let capsule = island.capsule
-        let motion = island.motion
+        // Same springs as the body; blur held to the glass's limit (see `glassBlurLimit`).
+        let motion = island.motion.inGlass
+        // Going back into the notch: the tuck springs, if this motion has them.
+        let tucking = capsule.shown ? nil : motion.tuck
         let drop: DropTarget? = if case .dropTarget(let target) = island.presentation { target } else { nil }
         return GlassEffectContainer {
             Color.clear
@@ -156,10 +161,10 @@ struct IslandView: View {
                 // On the content itself, not as a sibling: the container draws glass above
                 // anything that is not the glass's own content (the rim included).
                 .modifier(CapsuleSurface())
-                .animation(motion.edges) { $0.modifier(IslandWidth(width: capsule.width)) }
-                .animation(motion.body) { $0.modifier(IslandHeight(height: capsule.height)) }
+                .animation(tucking ?? motion.edges) { $0.modifier(IslandWidth(width: capsule.width)) }
+                .animation(tucking ?? motion.body) { $0.modifier(IslandHeight(height: capsule.height)) }
                 .offset(y: capsule.top)
-                .animation(motion.body, value: capsule.top)
+                .animation(tucking ?? motion.body, value: capsule.top)
                 // Fades in at once (it starts hidden inside the notch anyway) and out only
                 // once it is back up there, so the glass stops drawing while closed.
                 .opacity(capsule.shown ? 1 : 0)
@@ -235,21 +240,14 @@ struct IslandView: View {
             .allowsHitTesting(false)
     }
 
-    /// The two concave curves that flare the body into the top edge of the screen.
+    /// The two concave curves that flare the body into the top edge of the screen. One
+    /// shape that animates its radius itself, so a bouncy spring that swings the radius
+    /// below zero draws nothing there instead of a frame with a negative size.
     private func shoulders(metrics: IslandMetrics, motion: IslandMotion) -> some View {
-        let radius = metrics.shoulder
-        return HStack(spacing: 0) {
-            IslandShoulder(leading: true).fill(.black)
-                .frame(width: radius, height: radius)
-                .offset(x: -radius + 0.5)  // half a point of overlap: no hairline seam
-            Spacer(minLength: 0)
-            IslandShoulder(leading: false).fill(.black)
-                .frame(width: radius, height: radius)
-                .offset(x: radius - 0.5)
-        }
-        .frame(maxHeight: .infinity, alignment: .top)
-        .animation(motion.corner, value: radius)
-        .allowsHitTesting(false)
+        IslandShoulders(radius: metrics.shoulder)
+            .fill(.black)
+            .animation(motion.corner, value: metrics.shoulder)
+            .allowsHitTesting(false)
     }
 }
 
@@ -315,6 +313,30 @@ private struct CapsulePresence: ViewModifier {
             .animation(shown ? motion.contentIn : motion.contentOut, value: shown)
             .allowsHitTesting(shown)
             .accessibilityHidden(!shown)
+    }
+}
+
+/// A pill's glyph and words go soft once and come back sharp, while the pill's width
+/// springs to fit new words ("Saved" to "Reading page"). Without it the words are sharp
+/// while they morph and slide out with the growing edge, which reads as a resize. The blur peaks
+/// early (the edge moves fastest at the start) and is back to exactly 0 well before the
+/// spring settles; at rest nothing is blurred.
+private struct MorphBlur: ViewModifier {
+    let pulse: Int
+    let peak: CGFloat
+
+    func body(content: Content) -> some View {
+        let scale = IslandMotion.timeScale
+        let peak = peak
+        content.keyframeAnimator(initialValue: CGFloat(0), trigger: pulse) { view, blur in
+            view.blur(radius: blur)
+        } keyframes: { _ in
+            KeyframeTrack {
+                CubicKeyframe(peak, duration: 0.07 * scale)
+                CubicKeyframe(peak * 0.6, duration: 0.1 * scale)
+                CubicKeyframe(0, duration: 0.25 * scale)
+            }
+        }
     }
 }
 

@@ -172,14 +172,18 @@ MD_ASK_FIXTURE=1 "$APP/Contents/MacOS/MindDump"       # Ask plays canned answers
 MD_REDUCE_MOTION=1 "$APP/Contents/MacOS/MindDump"     # behave as if Reduce Motion were on
 MD_REDUCE_TRANSPARENCY=1 "$APP/Contents/MacOS/MindDump"  # a solid dark capsule, as with Reduce Transparency
 MD_API_BASE=http://127.0.0.1:18000 "$APP/..."         # talk to a throwaway backend, not your items
+MD_MOTION_TUNING=drastic "$APP/Contents/MacOS/MindDump"  # springs: calm, springy (default) or drastic
 notifyutil -p io.github.sxnfer.MindDump.debug.open    # drive it from a shell: peek, open, close, saved, film, script
+notifyutil -p io.github.sxnfer.MindDump.debug.tuning-calm   # switch springs while it runs (tuning-springy, tuning-drastic)
 ```
+
+The motion comes in three tunings (`IslandMotion.Tuning`): `calm` (the iPhone's measured springs, almost no overshoot), `springy` (every shape change overshoots a little and settles) and `drastic` (it pushes clearly past and eases back, with more blur on the words). A switch prints `[motion] tuning <name>` and applies from the next transition. The default is the one constant `IslandMotion.defaultTuning`. Reduce Motion ignores the tuning.
 
 Each transition prints a line such as `[frames] open: 156 frames, median 8.33 ms (120 Hz), worst 8.33 ms, late 0`. A late frame is a dropped frame. A whole answer stream is timed as one line, `[frames] stream: …`.
 
 The canned answers pick a script from a word in the question: `long` (passes the card's height), `nothing` (not from your items), `fail` (an error mid-stream), `limit` (429), `key` (no Claude key); anything else gets a short answer with two sources.
 
-`script` plays `<app temp folder>/script.txt`, one step per line: `pointer notch|away`, `click` (the notch), `click away`, `click <control>` (`mode`, `send`, `new-question`, `source-1`, `open-1`, …), `type …`, `key return|escape|tab|cmd-n`, `scroll <points>`, `drag <text>`, `dragfile <path>`, `dragexit`, `drop`, `dropfile`, `measure <name>`, `wait <s>`, `film`, `snap`, `backdrop white|dark|busy|off` (a window of ours behind the capsule) and `shot` (a still of the screen there, to see the glass), `boxsize`, `keystate`, `resignkey`, `hotkey [down|up]` (the global shortcut, from just after the system delivers it), `quit`. The full list is at the top of `DebugScript` in `Debug.swift`.
+`script` plays `<app temp folder>/script.txt`, one step per line: `pointer notch|away`, `click` (the notch), `click away`, `click <control>` (`mode`, `send`, `new-question`, `source-1`, `open-1`, …), `type …`, `key return|escape|tab|cmd-n`, `scroll <points>`, `drag <text>`, `dragfile <path>`, `dragexit`, `drop`, `dropfile`, `measure <name>`, `wait <s>`, `film [frames] [seconds]`, `snap`, `tuning calm|springy|drastic`, `pill saved|reading|ready|failed`, `openwaiting` (the capsule without the keyboard), `release` (a drop target let go, then "Saved", with no save), `backdrop white|dark|busy|off` (a window of ours behind the capsule) and `shot` (a still of the screen there, to see the glass), `boxsize`, `keystate`, `resignkey`, `hotkey [down|up]` (the global shortcut, from just after the system delivers it), `quit`. The full list is at the top of `DebugScript` in `Debug.swift`.
 
 ## Develop the backend
 
