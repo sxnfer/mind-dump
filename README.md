@@ -38,7 +38,7 @@ curl -s "localhost:8000/items/1?as_of=2026-11-01"             # what it said on 
 docker compose exec api python -m mind_dump.refetch --all --rebuild   # re-extract from landed files, no network
 ```
 
-Upload a PDF, PNG or JPEG (at most 25 MB) as the raw request body. The same bytes twice give a 409 that points at the first copy, whatever the file is called. The worker reads a PDF's text page by page; an image gets a description from Claude (it needs `ANTHROPIC_API_KEY`).
+Upload a PDF, PNG, JPEG, GIF or WebP (at most 25 MB) as the raw request body; the type is judged by the first bytes. The same bytes twice give a 409 that points at the first copy, whatever the file is called. The worker reads a PDF's text page by page; an image gets a description from Claude (it needs `ANTHROPIC_API_KEY`).
 
 ```bash
 curl -si --data-binary @file.pdf -H 'Content-Disposition: attachment; filename="file.pdf"' localhost:8000/items/upload
@@ -162,7 +162,7 @@ Right-click the notch or the capsule to quit. The app is unsigned (see `docs/dec
 
 ## Develop the Mac app
 
-The app is a black "island" that hangs from the notch, and a Liquid Glass capsule that appears just under it, in place (`app/MindDump/Island/`, `app/MindDump/Panel/CapsuleView.swift`). The window never moves; only the two shapes change inside it: the island on springs, the capsule by a short fade and a 4% scale from its top edge. The capsule has two modes, Capture and Ask (the round button or Tab flips them). Ask streams an answer with numbered sources from `POST /ask` (`app/MindDump/Ask/`), and the capsule grows into a card for it. Sources are numbered by item: two passages of one note share its number and its row, and opening the row shows both quotes, each with its page for a PDF. The row's header joins the pages as ranges ("p. 4, 9–11"). A row with several passages shows each quote in at most three lines, and at most six quotes, then "and N more passages". Text, or one PDF, PNG or JPEG file, dragged onto the notch is saved when you let go (`app/MindDump/Capture/DropModel.swift`; a file goes to `POST /items/upload`).
+The app is a black "island" that hangs from the notch, and a Liquid Glass capsule that appears just under it, in place (`app/MindDump/Island/`, `app/MindDump/Panel/CapsuleView.swift`). The window never moves; only the two shapes change inside it: the island on springs, the capsule by a short fade and a 4% scale from its top edge. The capsule has two modes, Capture and Ask (the round button or Tab flips them). Ask streams an answer with numbered sources from `POST /ask` (`app/MindDump/Ask/`), and the capsule grows into a card for it. Sources are numbered by item: two passages of one note share its number and its row, and opening the row shows both quotes, each with its page for a PDF. The row's header joins the pages as ranges ("p. 4, 9–11"). A row with several passages shows each quote in at most three lines, and at most six quotes, then "and N more passages". Text, or one PDF or image file, dragged onto the notch is saved when you let go (`app/MindDump/Capture/DropModel.swift`; a file goes to `POST /items/upload`). Any image macOS can open is taken (D42): a PNG, JPEG, GIF or WebP within Claude's limits goes byte for byte; a HEIC, TIFF or other image becomes a JPEG, and one over 8,000 pixels on a side or about 7.5 MB is scaled down to fit, on the Mac with ImageIO (`app/MindDump/Capture/ImagePrep.swift`).
 
 Debug builds carry these aids, mostly in `app/MindDump/Support/Debug.swift`:
 

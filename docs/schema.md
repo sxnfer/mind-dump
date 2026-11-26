@@ -2,7 +2,7 @@
 
 > The source of truth is `backend/migrations/`. Update this diagram in the same PR as any new migration.
 
-As of migration 011 (M5):
+As of migration 012 (M6, D42: GIF and WebP files):
 
 ```mermaid
 erDiagram
@@ -27,7 +27,7 @@ erDiagram
         text        body "required for notes, 1-20000 chars"
         timestamptz created_at "default now()"
         text        sha256 "files only: hash of the bytes, unique per file"
-        text        media_type "files only: application/pdf | image/png | image/jpeg"
+        text        media_type "files only: application/pdf | image/png | image/jpeg | image/gif | image/webp"
         bigint      size_bytes "files only, > 0"
         text        filename "files only, 1-200 chars, optional"
     }
@@ -163,7 +163,7 @@ erDiagram
 | Deleting an item deletes its `item_tags` rows | No dangling links to deleted items (`ON DELETE CASCADE`). |
 | A link's `url` is unique (`items_link_url_key`, partial: links only) | No duplicate links. The database decides, so two saves at the same instant can't both win; the API answers `409 Conflict` with `Location` of the existing item. Notes may repeat. |
 | A file's `sha256` is unique (`items_file_sha256_key`, partial: files only) | The same bytes are stored once, whatever the filename (D34). Same race-proof rule and `409` + `Location` as links. |
-| `media_type` is PDF, PNG or JPEG | The API decides it from the file's first bytes; the database refuses anything else. |
+| `media_type` is PDF, PNG, JPEG, GIF or WebP (012) | The API decides it from the file's first bytes; the database refuses anything else. The Mac app converts other images to JPEG first (D42). |
 | Deleting an item deletes its `fetches` and `item_versions` | `ON DELETE CASCADE`; the API then deletes the files in storage. |
 | At most one current version per item (`item_versions_one_current`) | Two "current" texts would make "what does it say now?" ambiguous (D32). |
 | At most one unfinished job per item (`jobs_one_open_per_item`, partial: `queued`, `running`, `failed`) | Two re-run clicks can't queue two jobs, and two workers never process one item at once (D6). `POST /items/{id}/process` answers `409`. |

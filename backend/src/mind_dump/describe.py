@@ -54,8 +54,12 @@ class Describer(Protocol):
 
 
 def image_size(data: bytes, media_type: str) -> tuple[int, int] | None:
-    """(width, height) from a PNG or JPEG header, or None if it can't be read.
-    The standard library has no image reader; these two headers are simple."""
+    """(width, height) from a PNG, JPEG, GIF or WebP header, or None if it can't be read.
+    The standard library has no image reader; these headers are simple (D42)."""
+    if media_type == "image/gif":
+        return _gif_size(data)
+    if media_type == "image/webp":
+        return _webp_size(data)
     if media_type == "image/png":
         if len(data) >= 24 and data[12:16] == b"IHDR":
             width, height = struct.unpack(">II", data[16:24])
@@ -82,6 +86,35 @@ def image_size(data: bytes, media_type: str) -> tuple[int, int] | None:
                 return width, height
             i += 2 + length
         return None
+    return None
+
+
+def _gif_size(data: bytes) -> tuple[int, int] | None:
+    """A GIF's "logical screen": the canvas every frame is drawn on. Claude reads only
+    the first frame of an animated GIF, and that frame fits inside this canvas."""
+    if len(data) >= 10 and data[:6] in (b"GIF87a", b"GIF89a"):
+        width, height = struct.unpack("<HH", data[6:10])
+        return width, height
+    return None
+
+
+def _webp_size(data: bytes) -> tuple[int, int] | None:
+    """A WebP's size from its first chunk, which is one of three kinds."""
+    if len(data) < 25 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+        return None
+    chunk = data[12:16]
+    if chunk == b"VP8L" and data[20] == 0x2F:  # lossless: 14 bits each, minus one
+        (bits,) = struct.unpack("<I", data[21:25])
+        return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+    if len(data) < 30:
+        return None
+    if chunk == b"VP8X":  # extended (animation, alpha, metadata): the canvas size
+        width = int.from_bytes(data[24:27], "little") + 1
+        height = int.from_bytes(data[27:30], "little") + 1
+        return width, height
+    if chunk == b"VP8 " and data[23:26] == b"\x9d\x01\x2a":  # lossy: a VP8 key frame
+        width, height = struct.unpack("<HH", data[26:30])
+        return width & 0x3FFF, height & 0x3FFF  # the top two bits are a scale hint
     return None
 
 

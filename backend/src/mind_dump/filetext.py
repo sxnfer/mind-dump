@@ -18,6 +18,7 @@ from pypdf import PdfReader
 
 from mind_dump.describe import Describer
 from mind_dump.errors import PermanentError
+from mind_dump.uploads import IMAGE_MEDIA_TYPES
 
 PAGE_BREAK = "\n\n"
 PDF_EXTRACTOR = f"pypdf {version('pypdf')}"
@@ -108,6 +109,6 @@ def describe_image(data: bytes, media_type: str, describer: Describer | None) ->
 def extract_file(data: bytes, media_type: str, describer: Describer | None) -> FileText:
     if media_type == "application/pdf":
         return extract_pdf(data)
-    if media_type in ("image/png", "image/jpeg"):
+    if media_type in IMAGE_MEDIA_TYPES:
         return describe_image(data, media_type, describer)
     raise PermanentError(f"Can't read files of type {media_type}")
