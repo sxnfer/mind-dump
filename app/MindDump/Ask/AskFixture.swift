@@ -11,6 +11,8 @@ import Foundation
 /// depends on a word in the question:
 ///
 ///     long     a long answer that passes the capsule's maximum height
+///     pdf      an answer citing 19 passages of one 13-page PDF (quotes of about 900
+///              characters): one source row that holds many passages
 ///     nothing  an answer not found in the items (not grounded)
 ///     fail     a few sentences, then an "error" event mid-stream
 ///     limit    a 429 before the stream starts (rate limit)
@@ -29,6 +31,7 @@ struct AskFixture: AnswerSource {
 
         let script: Script =
             question.contains("long") ? .long
+            : question.contains("pdf") ? .manyPassages
             : question.contains("nothing") ? .notFound
             : question.contains("fail") ? .failing
             : .short
@@ -74,7 +77,12 @@ struct AskFixture: AnswerSource {
     }
 
     private enum Script: Equatable {
-        case short, long, notFound, failing
+        case short, long, notFound, failing, manyPassages
+
+        /// The many-passages answer: 19 passages of one PDF, cited on these pages, in this
+        /// order (as a real answer about a 13-page PDF did on 2026-11-26).
+        static let manyPages = [1, 1, 4, 2, 3, 4, 4, 5, 6, 7, 8, 8, 9, 12, 12, 13, 13, 10, 11]
+        static func manyChunk(_ index: Int) -> Int { 101 + index }
 
         /// The passages the search hands over: every one the answer cites, and a couple
         /// it does not. The long answer's [c:99] is never announced (and the backend then
@@ -85,6 +93,7 @@ struct AskFixture: AnswerSource {
                 case .short, .failing: [(5, 5), (31, 12), (34, 12), (40, 13)]
                 case .long: [(6, 6), (7, 7), (8, 8)]
                 case .notFound: [(6, 6), (8, 8)]
+                case .manyPassages: Self.manyPages.indices.map { (Self.manyChunk($0), 50) } + [(8, 8)]
                 }
             return pairs.map { APIClient.Passage(chunkId: $0.0, itemId: $0.1) }
         }
@@ -110,6 +119,15 @@ struct AskFixture: AnswerSource {
                     + "read chapters 5 to 7 first, and that needs a desk [c:7].\n\nNothing in your items covers the "
                     + "flights or where in Alfama you are staying, so check those before you go. The bike and garden "
                     + "notes are unrelated to the trip and are not used here."
+            case .manyPassages:
+                // Two to four markers per sentence, all of one item.
+                "The handbook sets out how a carbon project goes from design to issued credits [c:101][c:102]. "
+                    + "It starts with the baseline and the project boundary [c:103][c:104][c:105], then the "
+                    + "monitoring plan and how often each value is measured [c:106][c:107][c:108].\n\nVerification "
+                    + "comes next: an independent body checks the monitoring report against the plan [c:109][c:110]"
+                    + "[c:111], and only then are credits issued to the registry [c:112][c:113]. A share of every "
+                    + "issuance goes into the buffer pool, which covers later reversals such as fire [c:114][c:115]"
+                    + "[c:116][c:117]. The last chapters cover renewals and the fees at each step [c:118][c:119]."
             case .notFound:
                 "Your items don't say what the weather in Lisbon is like in March. They cover the trip dates, the "
                     + "Sintra day trip and a dinner booking, but nothing about the weather or what to pack."
@@ -154,6 +172,26 @@ struct AskFixture: AnswerSource {
                 return APIClient.Answer(
                     conversationId: conversation, text: text, citations: [trip, books],
                     grounded: true, incomplete: true
+                )
+            case .manyPassages:
+                let base =
+                    "Each project defines its boundary, baseline and leakage before any credit can be issued. "
+                    + "The monitoring plan names every parameter, its source, the instrument used, how often it "
+                    + "is measured and how the data are archived. Uncertainty is handled conservatively: where a "
+                    + "value is uncertain, the lower estimate of emission reductions is used. The verification "
+                    + "body samples the raw records, visits the site, and checks the calculations line by line "
+                    + "against the approved methodology. Findings are raised as corrective action requests, and "
+                    + "the project must close each one before the verifier signs the statement. "
+                let citations = Self.manyPages.enumerated().map { index, page in
+                    APIClient.Citation(
+                        marker: "[c:\(Self.manyChunk(index))]", chunkId: Self.manyChunk(index), itemId: 50,
+                        type: "file", title: "Carbon project handbook.pdf", url: nil, page: page,
+                        quote: "Section \(index + 1), page \(page). " + base + base.prefix(240 + 20 * (index % 4))
+                    )
+                }
+                return APIClient.Answer(
+                    conversationId: conversation, text: streamed, citations: citations,
+                    grounded: true, incomplete: false
                 )
             case .notFound:
                 return APIClient.Answer(

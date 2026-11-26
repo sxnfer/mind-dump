@@ -25,11 +25,34 @@ final class AskModel {
         /// The first passage cited: the item's title, type and link are the same in all.
         var citation: APIClient.Citation { citations[0] }
 
-        /// The pages cited, once each and in order: "p. 4, 9". Nil when none has a page.
+        /// The pages cited, once each and in order, with runs of pages as a range:
+        /// "p. 4, 9", "p. 4, 9–11", "p. 1–13". Short, so one header line holds it. Nil
+        /// when none has a page.
         var pageLabel: String? {
             let pages = Array(Set(citations.compactMap(\.page))).sorted()
-            return pages.isEmpty ? nil : "p. " + pages.map(String.init).joined(separator: ", ")
+            guard var start = pages.first else { return nil }
+            var runs: [String] = []
+            var end = start
+            for page in pages.dropFirst() {
+                if page == end + 1 {
+                    end = page
+                    continue
+                }
+                runs.append(start == end ? "\(start)" : "\(start)–\(end)")
+                start = page
+                end = page
+            }
+            runs.append(start == end ? "\(start)" : "\(start)–\(end)")
+            return "p. " + runs.joined(separator: ", ")
         }
+
+        /// An open row shows at most this many passages: a long PDF can be cited 19
+        /// times, and every quote at once is a wall of text (and a long layout).
+        static let shownPassages = 6
+
+        /// The passages an open row shows, and how many it leaves out.
+        var shownCitations: ArraySlice<APIClient.Citation> { citations.prefix(Self.shownPassages) }
+        var hiddenCount: Int { max(0, citations.count - Self.shownPassages) }
 
         /// What the row is called: the title, else the web address's host, else the
         /// first words of the passage.

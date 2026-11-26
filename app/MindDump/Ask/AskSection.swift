@@ -455,6 +455,8 @@ private struct SourceRow: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.5))
                     .frame(width: 14)
+                // One line: the title shortens first; the pages (fixed size) and the
+                // arrow (fixed frame) keep theirs.
                 Text(source.title)
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(.white.opacity(0.86))
@@ -490,11 +492,14 @@ private struct SourceRow: View {
             .debugTarget("source-\(source.number)")
             if expanded {
                 // Every passage of this item the answer cited, once each, in the order
-                // first cited. With several, each quote names its own page.
+                // first cited. With several, each quote names its own page and shows at
+                // most three lines (ending in "…"), and at most six quotes show: a row
+                // with many passages stays a short list to scan, not a wall of text.
+                let several = source.citations.count > 1
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(source.citations, id: \.marker) { citation in
+                    ForEach(source.shownCitations, id: \.marker) { citation in
                         VStack(alignment: .leading, spacing: 2) {
-                            if source.citations.count > 1, let page = citation.page {
+                            if several, let page = citation.page {
                                 Text("p. \(page)")
                                     .font(.system(size: 10.5).monospacedDigit())
                                     .foregroundStyle(.white.opacity(0.36))
@@ -503,9 +508,15 @@ private struct SourceRow: View {
                                 .font(.system(size: 12))
                                 .foregroundStyle(.white.opacity(0.6))
                                 .lineSpacing(3)
-                                .lineLimit(9)
+                                .lineLimit(several ? 3 : 9)
+                                .truncationMode(.tail)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+                    }
+                    if source.hiddenCount > 0 {
+                        Text("and \(source.hiddenCount) more passages")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.36))
                     }
                 }
                 .padding(.leading, 42)
