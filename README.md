@@ -160,7 +160,7 @@ Right-click the notch or the capsule to quit. The app is unsigned (see `docs/dec
 
 ## Develop the Mac app
 
-The app is a black "island" that hangs from the notch, and a Liquid Glass capsule that comes out from under it (`app/MindDump/Island/`, `app/MindDump/Panel/CapsuleView.swift`). The window never moves; only the two shapes change size inside it, on springs. The capsule has two modes, Capture and Ask (the round button or Tab flips them). Ask streams an answer with numbered sources from `POST /ask` (`app/MindDump/Ask/`), and the capsule grows into a card for it. Text, or one PDF, PNG or JPEG file, dragged onto the notch is saved when you let go (`app/MindDump/Capture/DropModel.swift`; a file goes to `POST /items/upload`).
+The app is a black "island" that hangs from the notch, and a Liquid Glass capsule that appears just under it, in place (`app/MindDump/Island/`, `app/MindDump/Panel/CapsuleView.swift`). The window never moves; only the two shapes change inside it: the island on springs, the capsule by a short fade and a 4% scale from its top edge. The capsule has two modes, Capture and Ask (the round button or Tab flips them). Ask streams an answer with numbered sources from `POST /ask` (`app/MindDump/Ask/`), and the capsule grows into a card for it. Text, or one PDF, PNG or JPEG file, dragged onto the notch is saved when you let go (`app/MindDump/Capture/DropModel.swift`; a file goes to `POST /items/upload`).
 
 Debug builds carry these aids, mostly in `app/MindDump/Support/Debug.swift`:
 

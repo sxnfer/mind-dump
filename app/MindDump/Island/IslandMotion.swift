@@ -31,14 +31,7 @@ struct IslandMotion: Equatable {
     /// ("Saved" to "Reading page"): the words re-form while the width moves, so they never
     /// visibly slide or stretch. 0 is no blur at all (calm, Reduce Motion).
     var morphBlur: CGFloat = 0
-    /// The glass capsule's springs on its way back into the notch, in place of `edges` and
-    /// `body`; nil uses those. Its overshoot on the way in would happen inside the notch,
-    /// where the mask hides it, so a bouncy tuck shows nothing more and keeps the glass
-    /// drawing longer: measured, closes in drastic had 9 and 14 late frames in three runs
-    /// against calm's 6, all in the hidden tail. A critically damped spring as quick to the
-    /// edge of the notch (90% of the way in about 0.21 s, as the bouncy one) looks the same.
-    var tuck: Animation? = nil
-    /// Reduce Motion: the glass fades where it is instead of travelling.
+    /// Reduce Motion: a plain fade, with no scale or blur.
     var isReduced = false
 }
 
@@ -67,11 +60,16 @@ extension IslandMotion {
     ///
     /// - `calm`: the slice 1 values, islandcn's measurements of the iPhone. Most moves are
     ///   critically damped (no overshoot); only a pill appearing bounces (about 8%).
-    /// - `springy`: every shape change overshoots a little (about 2 to 6%) and settles,
-    ///   on springs about 10% longer; blur on crossing content roughly doubled.
+    /// - `springy` (the default): a pill appearing overshoots a little (about 2.5%) and
+    ///   settles; nothing else overshoots: a pill leaving, changing words, both legs of a
+    ///   save, and the hover (slice 9: overshoot is for a move that arrives, and the moves
+    ///   made most often get the least). Blur on crossing content about doubled.
     /// - `drastic`: every shape change pushes clearly past its target (about 7 to 15%) and
     ///   eases back, on springs 20 to 30% longer so the bounce reads as mass, not jitter;
     ///   blur peaks of 14 to 24 points, so words melt rather than cut.
+    ///
+    /// The glass capsule is the same in all three: it appears and leaves in place
+    /// (`capsuleIn`, `capsuleOut`). Only the black body's springs differ.
     ///
     /// Only the shape bounces. Content (opacity, scale, blur) always rides a critically
     /// damped spring: a scale that overshot would push glyphs into the body's edge, and an
@@ -123,11 +121,13 @@ extension IslandMotion {
                 blurIn: 6, blurOut: 4, contentScale: 0.85
             )
         case .springy:
+            // Slice 9: no visible bounce (0.9 overshoots 0.15%, under a pixel), less blur
+            // and scale. The hover is made many times a day.
             IslandMotion(
-                edges: spring(0.4, 0.64), body: spring(0.4, 0.66), corner: spring(0.36, 0.74),
+                edges: spring(0.36, 0.9), body: spring(0.36, 0.92), corner: spring(0.34, 0.95),
                 shadow: spring(0.4, 1),
-                contentIn: spring(0.32, 1, delay: 0.06), contentOut: spring(0.14, 1),
-                blurIn: 12, blurOut: 8, contentScale: 0.82
+                contentIn: spring(0.3, 1, delay: 0.05), contentOut: spring(0.14, 1),
+                blurIn: 8, blurOut: 6, contentScale: 0.9
             )
         case .drastic:
             // The hover is the move made most often, so it bounces but stays quick.
@@ -140,8 +140,8 @@ extension IslandMotion {
         }
     }
 
-    /// Pointer leaves without a click: settle back. Calm has no bounce; the others undershoot
-    /// a little, which happens inside the hardware notch, where black on black cannot be seen.
+    /// Pointer leaves without a click: settle back. Calm and springy have no bounce; drastic
+    /// undershoots a little, inside the hardware notch, where black on black cannot be seen.
     @MainActor static var unpeek: IslandMotion {
         switch tuning {
         case .calm:
@@ -153,10 +153,10 @@ extension IslandMotion {
             )
         case .springy:
             IslandMotion(
-                edges: spring(0.46, 0.74), body: spring(0.46, 0.76), corner: spring(0.44, 0.8),
-                shadow: spring(0.32, 1),
-                contentIn: spring(0.22, 1), contentOut: spring(0.16, 1),
-                blurIn: 8, blurOut: 12, contentScale: 0.82
+                edges: spring(0.4, 1), body: spring(0.4, 1), corner: spring(0.38, 1),
+                shadow: spring(0.3, 1),
+                contentIn: spring(0.2, 1), contentOut: spring(0.14, 1),
+                blurIn: 6, blurOut: 8, contentScale: 0.9
             )
         case .drastic:
             IslandMotion(
@@ -168,9 +168,9 @@ extension IslandMotion {
         }
     }
 
-    /// A drag carrying text arrives: the capsule comes out as the target. A touch slower
-    /// than a peek, with a small overshoot that says "yes, here". Leaving uses `dismiss`
-    /// (or `settle` back to a running pill); a release goes in through `collapse`.
+    /// A drag carrying text arrives: the capsule appears in place as the target
+    /// (`capsuleIn`; these springs move the body, which rests as the bare notch). Leaving
+    /// uses `dismiss` (or `settle` back to a running pill); a release goes through `collapse`.
     @MainActor static var target: IslandMotion {
         switch tuning {
         case .calm:
@@ -197,8 +197,9 @@ extension IslandMotion {
         }
     }
 
-    /// Click: the capsule comes out of the notch. This is islandcn's "pressExpand": the fast open that
-    /// follows a press, and the one a person triggers most.
+    /// Click or shortcut: the capsule appears in place (`capsuleIn`). These springs move
+    /// the body back to the bare notch (from the hover, say), and resize the capsule if it
+    /// was already showing as the drop target. From islandcn's "pressExpand".
     @MainActor static var open: IslandMotion {
         switch tuning {
         case .calm:
@@ -228,13 +229,11 @@ extension IslandMotion {
         }
     }
 
-    /// The capsule to a small status pill ("Saved"). First leg only: the capsule goes back
-    /// into the notch while the body waits there, then the model retargets with `settle`
-    /// and the body opens out to the pill: swallowed, then answered.
-    ///
-    /// The retarget stays at `collapseRetarget` (0.311 s) in every tuning: the bouncier
-    /// springs reach 90% of the way sooner (about 0.22 s against 0.26 s), so the capsule is
-    /// further in by then, and its overshoot goes up into the notch, out of sight.
+    /// The capsule to a small status pill ("Saved"). First leg only: the capsule starts to
+    /// fade out in place (`capsuleOut`) while the body waits at the notch; at
+    /// `collapseRetarget` the model retargets with `settle` and the body opens out to the
+    /// pill. The pill's words wait for the body (`contentIn`'s delay counts from the first
+    /// leg, so it is the retarget plus the settle's own delay).
     @MainActor static var collapse: IslandMotion {
         switch tuning {
         case .calm:
@@ -242,31 +241,31 @@ extension IslandMotion {
                 edges: spring(0.479, 0.894), body: spring(0.453, 0.928),
                 corner: spring(0.449, 0.94, delay: 0.01),
                 shadow: spring(0.3, 1),
-                contentIn: spring(0.5, 1, delay: 0.36), contentOut: spring(0.22, 1, delay: 0.017),
+                contentIn: spring(0.5, 1, delay: 0.15), contentOut: spring(0.22, 1, delay: 0.017),
                 blurIn: 8.3, blurOut: 7.75, contentScale: 0.9
             )
         case .springy:
             IslandMotion(
-                edges: spring(0.5, 0.76), body: spring(0.48, 0.78),
-                corner: spring(0.47, 0.82, delay: 0.01),
+                edges: spring(0.48, 1), body: spring(0.48, 1),
+                corner: spring(0.46, 1, delay: 0.01),
                 shadow: spring(0.3, 1),
-                contentIn: spring(0.5, 1, delay: 0.38), contentOut: spring(0.24, 1, delay: 0.017),
-                blurIn: 16, blurOut: 14, contentScale: 0.88, tuck: spring(0.36, 1)
+                contentIn: spring(0.5, 1, delay: 0.17), contentOut: spring(0.24, 1, delay: 0.017),
+                blurIn: 16, blurOut: 14, contentScale: 0.88
             )
         case .drastic:
             IslandMotion(
                 edges: spring(0.56, 0.62), body: spring(0.54, 0.64),
                 corner: spring(0.52, 0.7, delay: 0.015),
                 shadow: spring(0.3, 1),
-                contentIn: spring(0.54, 1, delay: 0.42), contentOut: spring(0.24, 1, delay: 0.02),
-                blurIn: 22, blurOut: 18, contentScale: 0.84, tuck: spring(0.36, 1)
+                contentIn: spring(0.54, 1, delay: 0.21), contentOut: spring(0.24, 1, delay: 0.02),
+                blurIn: 22, blurOut: 18, contentScale: 0.84
             )
         }
     }
 
-    /// Second leg of a collapse, and any in-place change of a pill's size. Calm has no
-    /// bounce (the overshoot already happened in the first leg); the others let the body
-    /// spring out to the pill, which is the part of a save the user actually sees.
+    /// Second leg of a collapse, and any in-place change of a pill's size. Calm and springy
+    /// have no bounce (a pill changing words, or answering a save, is not a gesture with
+    /// momentum); drastic lets the body spring out to the pill.
     @MainActor static var settle: IslandMotion {
         switch tuning {
         case .calm:
@@ -278,7 +277,7 @@ extension IslandMotion {
             )
         case .springy:
             IslandMotion(
-                edges: spring(0.48, 0.72), body: spring(0.48, 0.74), corner: spring(0.44, 0.8),
+                edges: spring(0.46, 1), body: spring(0.46, 1), corner: spring(0.42, 1),
                 shadow: spring(0.3, 1),
                 contentIn: spring(0.34, 1, delay: 0.09), contentOut: spring(0.18, 1),
                 blurIn: 14, blurOut: 12, contentScale: 0.88, morphBlur: 5
@@ -294,7 +293,7 @@ extension IslandMotion {
     }
 
     /// A pill appears from the bare notch. In calm the one clearly bouncy move (about 8%
-    /// over); in the others the bounciest one.
+    /// over); in springy the only one that overshoots, by about 2.5%; in drastic 15%.
     @MainActor static var appear: IslandMotion {
         switch tuning {
         case .calm:
@@ -306,7 +305,7 @@ extension IslandMotion {
             )
         case .springy:
             IslandMotion(
-                edges: spring(0.52, 0.58), body: spring(0.52, 0.6), corner: spring(0.52, 0.64),
+                edges: spring(0.5, 0.76), body: spring(0.5, 0.78), corner: spring(0.5, 0.82),
                 shadow: spring(0.4, 1),
                 contentIn: spring(0.46, 1, delay: 0.08), contentOut: spring(0.14, 1),
                 blurIn: 20, blurOut: 10, contentScale: 0.78
@@ -323,9 +322,9 @@ extension IslandMotion {
         }
     }
 
-    /// Back to the bare notch. Calm is critically damped. The others overshoot inwards:
-    /// the body dips narrower than the notch for a moment, inside the black hardware cutout
-    /// where it cannot be seen, so what shows is a quicker, more decided snap home.
+    /// Back to the bare notch. Calm and springy are critically damped. Drastic overshoots
+    /// inwards: the body dips narrower than the notch for a moment, inside the black
+    /// hardware cutout where it cannot be seen, so what shows is a more decided snap home.
     @MainActor static var dismiss: IslandMotion {
         switch tuning {
         case .calm:
@@ -337,17 +336,17 @@ extension IslandMotion {
             )
         case .springy:
             IslandMotion(
-                edges: spring(0.46, 0.76), body: spring(0.47, 0.78), corner: spring(0.46, 0.82),
+                edges: spring(0.44, 1), body: spring(0.45, 1), corner: spring(0.44, 1),
                 shadow: spring(0.3, 1),
                 contentIn: spring(0.22, 1), contentOut: spring(0.22, 1),
-                blurIn: 10, blurOut: 20, contentScale: 0.78, tuck: spring(0.34, 1)
+                blurIn: 10, blurOut: 20, contentScale: 0.78
             )
         case .drastic:
             IslandMotion(
                 edges: spring(0.54, 0.62), body: spring(0.55, 0.64), corner: spring(0.54, 0.7),
                 shadow: spring(0.3, 1),
                 contentIn: spring(0.24, 1), contentOut: spring(0.26, 1),
-                blurIn: 14, blurOut: 24, contentScale: 0.72, tuck: spring(0.34, 1)
+                blurIn: 14, blurOut: 24, contentScale: 0.72
             )
         }
     }
@@ -393,44 +392,44 @@ extension IslandMotion {
         )
     }
 
-    /// The glass capsule turns on at once: it starts tucked inside the notch, behind the
-    /// black body, so there is nothing to fade; the springs bring it out.
-    @MainActor var glassIn: Animation {
-        isReduced ? .easeOut(duration: 0.2 * Self.timeScale) : .easeOut(duration: 0.05 * Self.timeScale)
-    }
+    // MARK: The glass capsule
 
-    /// It turns off only once it is back inside the notch, so it never fades in view; then
-    /// the glass stops drawing.
-    @MainActor var glassOut: Animation {
-        isReduced
-            ? .easeOut(duration: 0.2 * Self.timeScale)
-            : .easeIn(duration: 0.08 * Self.timeScale).delay(0.26 * Self.timeScale)
-    }
-
-    /// The most blur content inside the glass capsule gets, in any tuning.
+    /// The capsule appears in place, just under the notch: it fades in from 96% of its
+    /// size, scaled from its top centre (so its top edge stays where it rests), while its
+    /// content sharpens from a light blur. No overshoot: a tap or a key press has no
+    /// momentum to carry past. The same in every tuning, and from the bare notch or the
+    /// hover alike. A critically damped spring of 0.3 s is within 1% of rest at 0.32 s,
+    /// and a second press retargets it from wherever it has got to.
     ///
-    /// Why a limit: blurring a layer inside the glass costs far more than blurring the
-    /// pill's few words on black. Measured on a 120 Hz display, three runs per tuning in
-    /// turns, before this limit: with blur peaks of 18 to 24 points in the glass, a drop
-    /// release went from 1 late frame in 3 runs (calm) to 6, the second leg after it from 0
-    /// to 4, and closes from 6 to 9 or 11. 12 is the most calm itself uses in the glass (its
-    /// dismiss), so calm is unchanged and the others cost no more than calm there. The black
-    /// body's content keeps the full blur of each tuning.
-    static let glassBlurLimit: CGFloat = 12
-
-    /// These springs for content inside the glass: the same, with the blur held to
-    /// `glassBlurLimit`.
-    var inGlass: IslandMotion {
-        var motion = self
-        motion.blurIn = min(blurIn, Self.glassBlurLimit)
-        motion.blurOut = min(blurOut, Self.glassBlurLimit)
-        return motion
+    /// Why in place (slice 9): it used to slide out from behind the notch, hidden above
+    /// the notch's lower edge by a straight mask. From the bare notch the glass was far
+    /// wider than the notch as it crossed that line, so it looked cut off by nothing.
+    @MainActor var capsuleIn: Animation {
+        isReduced ? .easeOut(duration: 0.2 * Self.timeScale) : Self.spring(0.3, 1)
     }
+
+    /// It leaves faster than it came: within 1% of gone by 0.21 s.
+    @MainActor var capsuleOut: Animation {
+        isReduced ? .easeOut(duration: 0.2 * Self.timeScale) : Self.spring(0.2, 1)
+    }
+
+    /// Hidden, the capsule is this much of its size (scaled from its top centre).
+    var capsuleScale: CGFloat { isReduced ? 1 : 0.96 }
+
+    /// Blur (points) on the capsule's content while hidden; 0 at rest. Light on purpose:
+    /// blurring a layer inside the glass costs far more than blurring a pill's words on
+    /// black (slice 8 measured 18 to 24 points there: a drop release went from 1 late frame
+    /// in three runs to 6, closes from 6 to 9 or 11; 12 cost no more than calm). The glass
+    /// itself is not blurred, only faded and scaled.
+    var capsuleBlur: CGFloat { isReduced ? 0 : 8 }
 
     // MARK: Timings that sequence the springs
 
-    /// When a collapse stops aiming at the notch and aims at the pill.
-    static let collapseRetarget = 0.311
+    /// When a collapse's body stops waiting at the notch and opens out to the pill. By
+    /// then the capsule's fade out is about 70% done (`capsuleOut`), so the pill clearly
+    /// answers the capsule leaving, without a pause between them. (Slice 8: 0.311 s, the
+    /// time the capsule took to slide back into the notch.)
+    static let collapseRetarget = 0.1
     /// While an answer streams, the card grows in steps of this many points (about three
     /// lines of the answer), not line by line (see `IslandModel.growsInSteps`).
     static let answerGrowthStep: CGFloat = 60
