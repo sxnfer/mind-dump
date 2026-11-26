@@ -169,6 +169,10 @@ final class AskModel {
                     self?.handle(event)
                 }
             } catch is CancellationError {
+                #if DEBUG
+                print("[ask] stream cancelled")
+                fflush(stdout)
+                #endif
                 return
             } catch {
                 self?.fail(error)
@@ -183,6 +187,10 @@ final class AskModel {
             draft = ""  // nothing asked yet: a clean box is all "new" can mean
             return
         }
+        #if DEBUG
+        print("[ask] new question\(isBusy ? ": stops the answer on its way" : "")")
+        fflush(stdout)
+        #endif
         task?.cancel()
         task = nil
         island.capsuleContentWillChange("new-question")
@@ -225,40 +233,60 @@ final class AskModel {
         NSWorkspace.shared.open(url)
     }
 
-    /// The capsule is about to close. An answer still on its way is cancelled: the
-    /// backend saves nothing unless it sends "final", so the conversation is as it was.
-    /// The question goes back in the box, one Return from asking again.
+    /// The capsule is about to close. An answer on its way keeps coming: closing is not
+    /// "stop". The user may have closed it to look at something else, or switched apps
+    /// (which closes it too), and expects the answer to be there when they come back. San
+    /// chose this on 2026-11-27; it replaced slice 2's "cancel on close", which made the
+    /// user ask again. Only New (⌘N) or quitting the app stop an answer (a new question cannot
+    /// be sent while one is on its way).
     ///
-    /// This runs before the collapse starts, and changes nothing on screen then: the
-    /// text stops flowing (no new characters while the capsule blurs out), and everything
-    /// that moves layout (restoring the last answer, or showing the rest of a finished
-    /// one) waits until the capsule has faded out. Doing it in the collapse's first frame
-    /// made that frame 13 to 38 ms late.
+    /// While the capsule is closed nobody can read the answer, so nothing is drawn: the
+    /// pour stops and the arriving text waits in `reveal` (see `AnswerReveal.hold`). The
+    /// status, the phase and the final answer are still recorded as they come.
+    ///
+    /// This runs before the collapse starts and changes nothing on screen, so the
+    /// collapse's first frame has no extra work (slice 2's known issue came from work done
+    /// at that moment).
     func panelWillClose() {
-        guard isBusy else { return }
-        reveal.pause()
-        if answer == nil {
-            task?.cancel()
-            task = nil
-            onStream?(nil)
+        reveal.hold()
+        #if DEBUG
+        if isBusy {
+            print("[ask] close: answer kept, still on its way (\(phase), \(reveal.debugCounts))")
+        } else if question != nil {
+            print("[ask] close: answer kept (\(phase), \(reveal.debugCounts))")
+        } else {
+            print("[ask] close: nothing asked")
         }
-        let question = question
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7 * IslandMotion.timeScale) { [weak self] in
-            guard let self, self.isBusy else { return }
-            if self.answer != nil {
-                self.reveal.flush()  // complete: show all of it next time
-                return
-            }
-            guard self.task == nil else { return }  // a new ask started meanwhile
-            if self.draft.isEmpty, let question { self.draft = question }
-            self.restoreLastTurn()
+        fflush(stdout)
+        // A stream is timed as one span until the close, so the close is timed on its own.
+        onStream?(nil)
+        #endif
+    }
+
+    /// The capsule is about to open: what arrived while it was closed shows at once, laid
+    /// out once, before the open's first frame, so the capsule opens at its full height.
+    /// An unfinished answer then goes on pouring at its normal pace; a finished one is
+    /// whole, with its sources, which come in without their stagger (nobody saw them come).
+    func panelWillOpen() {
+        #if DEBUG
+        let before = reveal.debugCounts
+        #endif
+        // A finished answer completes here, not on a later turn of the main queue: its
+        // sources are then part of the open's first layout, not a resize after it.
+        if answer != nil, phase == .answering { sourcesHaveEntered = true }
+        reveal.resume()
+        #if DEBUG
+        if question != nil || errorMessage != nil {
+            print("[ask] reopen: \(phase), \(before) before, \(reveal.debugCounts) now\(errorMessage == nil ? "" : ", error shown")")
+            fflush(stdout)
         }
+        #endif
     }
 
     // MARK: The card's height
 
     /// How the card follows its content's height. Decided here only, by the phase, so
-    /// every way a turn starts or ends (an answer, a failure, New, a cancel on close)
+    /// every way a turn starts or ends (an answer, a failure, New, a new question)
     /// follows the same rule.
     ///
     /// - Waiting for words (thinking, searching, reading): the card fits exactly, so the
@@ -284,7 +312,8 @@ final class AskModel {
         case .status(let next):
             // Words, then a search: those words were a preamble ("Let me look…"), not
             // the answer. The backend's final text leaves them out, so they go now.
-            if case .thinking = next {} else if !reveal.isEmpty, answer == nil {
+            // (Words received, not only words shown: while the capsule is closed they wait.)
+            if case .thinking = next {} else if reveal.hasReceived, answer == nil {
                 withAnimation(contentSpring) { reveal.reset(keepingPassages: true) }
             }
             // Plain assignment: the status line animates its own words (see `hideStatus`).
@@ -336,11 +365,12 @@ final class AskModel {
         withAnimation(contentSpring) {
             status = nil
             if draft.isEmpty, let question { draft = question }
-            if reveal.isEmpty {
-                // Nothing shown yet: put the last answer back, as if this one never left.
+            if !reveal.hasReceived {
+                // Nothing arrived yet: put the last answer back, as if this one never left.
                 restoreLastTurn()
             } else {
-                // Words were shown: keep them, dimmed, so it is clear they are unfinished.
+                // Words came: keep them, dimmed, so it is clear they are unfinished. (While
+                // the capsule is closed, they show when it opens.)
                 reveal.flush()
                 partialFailed = true
                 phase = .done
