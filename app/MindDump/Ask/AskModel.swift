@@ -83,7 +83,7 @@ final class AskModel {
         didSet { if draft != oldValue, phase == .idle || phase == .done { errorMessage = nil } }
     }
     private(set) var phase: Phase = .idle {
-        didSet { if phase != oldValue { fitCard(leaving: oldValue) } }
+        didSet { if phase != oldValue { fitCard() } }
     }
     /// The question on screen, above its answer.
     private(set) var question: String?
@@ -98,11 +98,6 @@ final class AskModel {
     private(set) var partialFailed = false
     /// Bumps when a new turn replaces the old one, so the view can cross-fade them.
     private(set) var turnID = 0
-    /// A follow-up keeps the card at least this tall until its turn ends (see `fitCard`).
-    private(set) var heldCardHeight: CGFloat = 0
-    /// The card's height as last laid out (`CapsuleView` reports it). Read only when a
-    /// follow-up starts, so nothing redraws when it changes.
-    @ObservationIgnored var cardHeight: CGFloat = 0
     /// Source rows that are open (showing their passage).
     private(set) var expanded: Set<Int> = []
     /// Bumps when a click in the answer (a source row, New question) should hand the
@@ -273,14 +268,10 @@ final class AskModel {
     ///   first words. That is where the steps pay: fewer resizes of the glass per line.
     /// - Done, failed, replaced or nothing asked: an exact fit again.
     ///
-    /// A follow-up keeps the last answer's height until its own turn ends: shrinking to
-    /// one status line and growing back with the new words would move the card twice.
-    private func fitCard(leaving old: Phase) {
-        switch phase {
-        case .waiting: heldCardHeight = old == .done ? cardHeight : 0
-        case .answering: break
-        case .idle, .done: heldCardHeight = 0
-        }
+    /// A follow-up is no exception: the card shrinks from the last answer to its status
+    /// line, then grows with the new words (San's choice on 2026-11-26: an even fit while
+    /// thinking matters more than holding the old height).
+    private func fitCard() {
         island.growsInSteps = phase == .answering
     }
 

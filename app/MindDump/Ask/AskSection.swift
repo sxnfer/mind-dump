@@ -67,8 +67,6 @@ struct AskSection: View {
             .padding(.top, isCard ? 13 : 0)
             .padding(.bottom, isCard ? Self.bottomPadding : 0)
         }
-        // A follow-up keeps the last answer's height while it waits (`AskModel.fitCard`).
-        .frame(minHeight: ask.heldCardHeight, alignment: .top)
         // Nothing asked: no height at all. (The scroll view inside stays built, at zero
         // height: building a new one for every question costs frames.)
         .frame(height: isCard ? nil : 0, alignment: .top)
