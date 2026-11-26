@@ -100,8 +100,10 @@ final class IslandModel {
     private(set) var capsuleContentHeight: CGFloat = IslandLayout.capsuleHeight
     private var measuredContentHeight: CGFloat = IslandLayout.capsuleHeight
 
-    /// True while an answer streams: the card grows in steps of a few lines, not on every
-    /// new line, then fits its content exactly once the answer is complete.
+    /// True while an answer's words stream: the card grows in steps of a few lines, not on
+    /// every new line, then fits its content exactly once the answer is complete. Ask
+    /// sets it from the first words on, not from the question (`AskModel.fitCard`):
+    /// before any words the card fits its status line exactly.
     ///
     /// Why: the glass shape resizing on its spring for each new line was the cost of a
     /// streaming answer. Measured on the same long canned answer, in late frames per
@@ -113,7 +115,9 @@ final class IslandModel {
         didSet {
             // Back to an exact fit. On the next turn of the main queue, so the content
             // that ended the stream (the sources, a notice, an error) is measured first
-            // and the card makes one move, not a shrink and then a grow.
+            // and the card makes one move, not a shrink and then a grow. (Turning steps
+            // on needs no refit: the first words change the height, and that measurement
+            // is rounded up.)
             guard oldValue, !growsInSteps else { return }
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.growsInSteps else { return }

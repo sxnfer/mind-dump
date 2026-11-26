@@ -82,7 +82,9 @@ final class AskModel {
     var draft = "" {
         didSet { if draft != oldValue, phase == .idle || phase == .done { errorMessage = nil } }
     }
-    private(set) var phase: Phase = .idle
+    private(set) var phase: Phase = .idle {
+        didSet { if phase != oldValue { fitCard() } }
+    }
     /// The question on screen, above its answer.
     private(set) var question: String?
     /// What the agent is doing, while it works.
@@ -160,7 +162,6 @@ final class AskModel {
             reveal.reset()
         }
         sourcesHaveEntered = false
-        island.growsInSteps = true
         onStream?("stream")
         task = Task { [weak self, source] in
             do {
@@ -201,7 +202,6 @@ final class AskModel {
         }
         lastTurn = nil
         focusRequests += 1
-        island.growsInSteps = false
         onStream?(nil)
     }
 
@@ -255,6 +255,26 @@ final class AskModel {
         }
     }
 
+    // MARK: The card's height
+
+    /// How the card follows its content's height. Decided here only, by the phase, so
+    /// every way a turn starts or ends (an answer, a failure, New, a cancel on close)
+    /// follows the same rule.
+    ///
+    /// - Waiting for words (thinking, searching, reading): the card fits exactly, so the
+    ///   space under the status line is the space at its sides. Growing in steps here
+    ///   only rounded the status line up to the next step: an empty band under it.
+    /// - Words flowing: the card grows in steps (`IslandModel.growsInSteps`), from the
+    ///   first words. That is where the steps pay: fewer resizes of the glass per line.
+    /// - Done, failed, replaced or nothing asked: an exact fit again.
+    ///
+    /// A follow-up is no exception: the card shrinks from the last answer to its status
+    /// line, then grows with the new words (San's choice on 2026-11-26: an even fit while
+    /// thinking matters more than holding the old height).
+    private func fitCard() {
+        island.growsInSteps = phase == .answering
+    }
+
     // MARK: The stream
 
     private func handle(_ event: APIClient.AskEvent) {
@@ -306,12 +326,10 @@ final class AskModel {
         // on their own, and the body follows the new height on its spring.
         sources = answer.grounded ? Self.numbered(answer.citations, by: reveal.number(ofChunk:)) : []
         phase = .done
-        island.growsInSteps = false
     }
 
     private func fail(_ error: Error) {
         task = nil
-        island.growsInSteps = false
         onStream?(nil)
         let message = error.localizedDescription
         island.capsuleContentWillChange("ask-error")
@@ -332,7 +350,6 @@ final class AskModel {
     }
 
     private func restoreLastTurn() {
-        island.growsInSteps = false
         status = nil
         partialFailed = false
         turnID += 1
