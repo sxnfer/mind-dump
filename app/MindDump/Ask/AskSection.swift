@@ -18,6 +18,10 @@ struct AskSection: View {
 
     /// Space under the card's last line.
     static let bottomPadding: CGFloat = 16
+    /// Space at the card's sides, from the glass's edge to the text.
+    static let sideMargin: CGFloat = 22
+    /// Space between the answer's parts (its text, the status line, notices, sources).
+    private static let partGap: CGFloat = 14
 
     /// The answer's natural height, and where the scroll view starts in this section.
     @State private var contentHeight: CGFloat = 0
@@ -59,10 +63,12 @@ struct AskSection: View {
                         scrollTop = $0
                     }
             }
-            .padding(.horizontal, 22)
+            .padding(.horizontal, Self.sideMargin)
             .padding(.top, isCard ? 13 : 0)
             .padding(.bottom, isCard ? Self.bottomPadding : 0)
         }
+        // A follow-up keeps the last answer's height while it waits (`AskModel.fitCard`).
+        .frame(minHeight: ask.heldCardHeight, alignment: .top)
         // Nothing asked: no height at all. (The scroll view inside stays built, at zero
         // height: building a new one for every question costs frames.)
         .frame(height: isCard ? nil : 0, alignment: .top)
@@ -175,8 +181,10 @@ struct AskSection: View {
         }
     }
 
+    /// The parts are spaced by hand, not by the stack, so the gaps under a status line
+    /// alone can differ from the gaps between parts.
     private var answerContent: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
             // Always there, empty until the first words: inserting a whole new text view
             // at the moment the words start cost two dropped frames. Now the first words
             // add one line to a view that already exists. No blur: characters ink in.
@@ -185,9 +193,10 @@ struct AskSection: View {
                 .id(ask.reveal.generation)
                 .transition(.opacity)
             if let status = ask.status {
-                // Leaves quickly: the first words take its place.
+                // Leaves quickly: the first words take its place. With no words yet it
+                // sits where the first line of the answer will sit.
                 StatusLine(status: status)
-                    .padding(.top, ask.reveal.hasText ? 0 : -14)  // no gap under an empty answer
+                    .padding(.top, ask.reveal.hasText ? Self.partGap : 0)
                     .transition(.opacity.animation(.easeOut(duration: 0.1 * IslandMotion.timeScale)))
             }
             if ask.phase == .done, let answer = ask.answer, !ask.partialFailed {
@@ -197,6 +206,7 @@ struct AskSection: View {
                         text: "Not found in your items. Nothing you saved answers this.",
                         strong: true
                     )
+                    .padding(.top, Self.partGap)
                     .transition(.opacity)
                 }
                 if answer.incomplete {
@@ -205,17 +215,31 @@ struct AskSection: View {
                         text: "The search ran out of steps, so this answer may be incomplete.",
                         strong: false
                     )
+                    .padding(.top, Self.partGap)
                     .transition(.opacity)
                 }
                 if !ask.sources.isEmpty {
                     SourcesList(ask: ask, island: island)
+                        .padding(.top, Self.partGap)
                 }
             }
-            Color.clear.frame(height: 0).id(Self.tailID)
+            Color.clear.frame(height: 0)
+                .padding(.top, statusAlone ? Self.statusAloneGap : Self.partGap)
+                .id(Self.tailID)
         }
         .padding(.bottom, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    /// Only the status line shows (thinking, searching, reading): the card fits it exactly.
+    private var statusAlone: Bool { ask.status != nil && !ask.reveal.hasText }
+
+    /// Under a status line alone, the line's ink ends as far from the card's bottom edge
+    /// as the text starts from its sides: this gap, the 2 points under the content and
+    /// the card's bottom padding make the side margin. (Measured on screen: 22 points
+    /// under and 22 at the sides; the line's ink and the glass's edge each take about a
+    /// point, and cancel out.) Between parts the gap stays 14, under an answer as before.
+    private static let statusAloneGap: CGFloat = sideMargin - bottomPadding - 2
 
     // MARK: Scrolling
 

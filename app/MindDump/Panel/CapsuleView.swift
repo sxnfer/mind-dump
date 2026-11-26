@@ -291,7 +291,11 @@ struct CapsuleView: View {
                 .modifier(Shown(shown: panel.mode == .capture))
             AskSection(ask: ask, island: island, room: askRoom, isRehearsal: isRehearsal)
                 .fixedSize(horizontal: false, vertical: true)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { belowHeights[.ask] = $0 }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    belowHeights[.ask] = height
+                    // Ask holds this height for a follow-up (`AskModel.fitCard`).
+                    if !isRehearsal { ask.cardHeight = height }
+                }
                 .modifier(Shown(shown: panel.mode == .ask))
                 // With no card it is empty: no fade. Fading its (empty) scroll view inside
                 // the glass still cost one to four late frames per flip.

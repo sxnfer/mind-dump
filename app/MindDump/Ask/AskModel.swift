@@ -82,7 +82,9 @@ final class AskModel {
     var draft = "" {
         didSet { if draft != oldValue, phase == .idle || phase == .done { errorMessage = nil } }
     }
-    private(set) var phase: Phase = .idle
+    private(set) var phase: Phase = .idle {
+        didSet { if phase != oldValue { fitCard(leaving: oldValue) } }
+    }
     /// The question on screen, above its answer.
     private(set) var question: String?
     /// What the agent is doing, while it works.
@@ -96,6 +98,11 @@ final class AskModel {
     private(set) var partialFailed = false
     /// Bumps when a new turn replaces the old one, so the view can cross-fade them.
     private(set) var turnID = 0
+    /// A follow-up keeps the card at least this tall until its turn ends (see `fitCard`).
+    private(set) var heldCardHeight: CGFloat = 0
+    /// The card's height as last laid out (`CapsuleView` reports it). Read only when a
+    /// follow-up starts, so nothing redraws when it changes.
+    @ObservationIgnored var cardHeight: CGFloat = 0
     /// Source rows that are open (showing their passage).
     private(set) var expanded: Set<Int> = []
     /// Bumps when a click in the answer (a source row, New question) should hand the
@@ -160,7 +167,6 @@ final class AskModel {
             reveal.reset()
         }
         sourcesHaveEntered = false
-        island.growsInSteps = true
         onStream?("stream")
         task = Task { [weak self, source] in
             do {
@@ -201,7 +207,6 @@ final class AskModel {
         }
         lastTurn = nil
         focusRequests += 1
-        island.growsInSteps = false
         onStream?(nil)
     }
 
@@ -255,6 +260,30 @@ final class AskModel {
         }
     }
 
+    // MARK: The card's height
+
+    /// How the card follows its content's height. Decided here only, by the phase, so
+    /// every way a turn starts or ends (an answer, a failure, New, a cancel on close)
+    /// follows the same rule.
+    ///
+    /// - Waiting for words (thinking, searching, reading): the card fits exactly, so the
+    ///   space under the status line is the space at its sides. Growing in steps here
+    ///   only rounded the status line up to the next step: an empty band under it.
+    /// - Words flowing: the card grows in steps (`IslandModel.growsInSteps`), from the
+    ///   first words. That is where the steps pay: fewer resizes of the glass per line.
+    /// - Done, failed, replaced or nothing asked: an exact fit again.
+    ///
+    /// A follow-up keeps the last answer's height until its own turn ends: shrinking to
+    /// one status line and growing back with the new words would move the card twice.
+    private func fitCard(leaving old: Phase) {
+        switch phase {
+        case .waiting: heldCardHeight = old == .done ? cardHeight : 0
+        case .answering: break
+        case .idle, .done: heldCardHeight = 0
+        }
+        island.growsInSteps = phase == .answering
+    }
+
     // MARK: The stream
 
     private func handle(_ event: APIClient.AskEvent) {
@@ -306,12 +335,10 @@ final class AskModel {
         // on their own, and the body follows the new height on its spring.
         sources = answer.grounded ? Self.numbered(answer.citations, by: reveal.number(ofChunk:)) : []
         phase = .done
-        island.growsInSteps = false
     }
 
     private func fail(_ error: Error) {
         task = nil
-        island.growsInSteps = false
         onStream?(nil)
         let message = error.localizedDescription
         island.capsuleContentWillChange("ask-error")
@@ -332,7 +359,6 @@ final class AskModel {
     }
 
     private func restoreLastTurn() {
-        island.growsInSteps = false
         status = nil
         partialFailed = false
         turnID += 1
