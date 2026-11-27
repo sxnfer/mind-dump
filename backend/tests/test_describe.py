@@ -175,6 +175,50 @@ def test_image_sizes_are_read_from_png_and_jpeg_headers() -> None:
         check_image(jpeg(8001, 10), "image/jpeg")
 
 
+def gif(width: int, height: int) -> bytes:
+    return b"GIF89a" + struct.pack("<HH", width, height) + b"\xf7\x00\x00" + b"\x00" * 8
+
+
+def webp(chunk: bytes, payload: bytes) -> bytes:
+    body = b"WEBP" + chunk + struct.pack("<I", len(payload)) + payload
+    return b"RIFF" + struct.pack("<I", len(body)) + body
+
+
+def webp_lossy(width: int, height: int) -> bytes:  # a VP8 key frame: tag, start code, size
+    return webp(b"VP8 ", b"\x9d\x01\x00" + b"\x9d\x01\x2a" + struct.pack("<HH", width, height))
+
+
+def webp_lossless(width: int, height: int) -> bytes:  # signature, then 14 + 14 bits, minus one
+    return webp(b"VP8L", b"\x2f" + struct.pack("<I", (width - 1) | (height - 1) << 14))
+
+
+def webp_extended(width: int, height: int) -> bytes:  # flags, reserved, 24 + 24 bits, minus one
+    sizes = (width - 1).to_bytes(3, "little") + (height - 1).to_bytes(3, "little")
+    return webp(b"VP8X", b"\x10\x00\x00\x00" + sizes)
+
+
+def test_image_sizes_are_read_from_gif_and_webp_headers() -> None:
+    assert image_size(gif(640, 480), "image/gif") == (640, 480)
+    assert image_size(webp_lossy(1920, 1080), "image/webp") == (1920, 1080)
+    assert image_size(webp_lossless(1280, 800), "image/webp") == (1280, 800)
+    assert image_size(webp_extended(16383, 9000), "image/webp") == (16383, 9000)
+    # The top two bits of a lossy size are a scale hint, not part of the size.
+    assert image_size(webp_lossy(1920 | 0xC000, 1080), "image/webp") == (1920, 1080)
+    assert image_size(b"GIF89a\x01", "image/gif") is None
+    assert image_size(b"RIFF\x00\x00\x00\x00WEBPVP8Z" + b"\x00" * 20, "image/webp") is None
+
+
+def test_the_pixel_limit_holds_for_gif_and_webp() -> None:
+    check_image(gif(8000, 8000), "image/gif")
+    check_image(webp_lossless(8000, 1), "image/webp")
+    with pytest.raises(PermanentError, match="8001 x 600 pixels"):
+        check_image(gif(8001, 600), "image/gif")
+    with pytest.raises(PermanentError, match="400 x 9000 pixels"):
+        check_image(webp_extended(400, 9000), "image/webp")
+    with pytest.raises(PermanentError, match="8200 x 100 pixels"):
+        check_image(webp_lossy(8200, 100), "image/webp")
+
+
 def test_settings_choose_the_describer() -> None:
     base = Settings(database_url="postgresql://x", migrations_dir=".")  # type: ignore[arg-type]
     assert create_describer(base) is None

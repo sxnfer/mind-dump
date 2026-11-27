@@ -20,3 +20,5 @@ Why (San):
 - Rows first, then the file: a failure can only leave an unused file, never a row pointing at nothing.
 Cost: a raw body carries one file per request and no form fields, so the filename travels in a header. The type check knows only three formats; anything else is a 415 until it is added on purpose.
 We will switch if: a browser form must upload directly (then decide on `python-multipart`), or users need more file types.
+
+Amended 2026-11-27 by D42: GIF and WebP are accepted too, by their first bytes (`GIF87a` or `GIF89a`; `RIFF`, four bytes, `WEBP`), so the allowed types are PDF, PNG, JPEG, GIF and WebP (migration 012, API 0.9.0). The Mac app converts every other image it can open (HEIC, TIFF and the rest) to JPEG, and shrinks an image over Claude's limits, before upload. For those the hash is the hash of the converted bytes; the conversion is deterministic, so the same photo dropped twice is still "Already saved". See `docs/decisions/D42-image-formats.md`.

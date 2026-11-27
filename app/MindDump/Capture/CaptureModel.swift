@@ -105,8 +105,9 @@ final class CaptureModel {
 
     /// A dropped file: uploaded, then the same "Saved", live status and "Already saved"
     /// as a note. The worker reads a PDF's text or describes an image ("Processing").
-    func storeFile(_ url: URL, name: String) async throws {
-        try await announce(isLink: false) { [api] in try await api.uploadFile(url, name: name) }
+    /// An image may arrive here as bytes the app made from the file (`ImagePrep`, D42).
+    func storeFile(_ body: APIClient.UploadBody, name: String) async throws {
+        try await announce(isLink: false) { [api] in try await api.uploadFile(body, name: name) }
     }
 
     /// The part every save shares: run it, then tell the island.
