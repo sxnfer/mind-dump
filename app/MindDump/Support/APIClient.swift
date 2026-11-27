@@ -162,7 +162,7 @@ struct APIClient: Sendable {
         case 409:
             throw APIError.alreadySaved
         case 422:
-            throw APIError.rejected(Self.firstValidationMessage(in: data) ?? "The backend rejected this.")
+            throw APIError.rejected(Self.rejectionMessage(in: data, kind: payload["type"] ?? "note"))
         default:
             throw APIError.unexpected(code)
         }
@@ -177,24 +177,32 @@ struct APIClient: Sendable {
         }
     }
 
-    /// An error's `detail` when it is a plain sentence (the upload route's own errors), or
-    /// the first validation message.
+    /// An error's `detail` when it is a plain sentence (the upload route's own errors).
+    /// A list of validation errors is the framework's wording, never shown as it is.
     private static func detailMessage(in data: Data) -> String? {
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let detail = json["detail"] as? String
-        {
-            return detail
-        }
-        return firstValidationMessage(in: data)
-    }
-
-    /// FastAPI's 422 body: {"detail": [{"loc": [...], "msg": "..."}]}
-    private static func firstValidationMessage(in data: Data) -> String? {
         guard
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let details = json["detail"] as? [[String: Any]],
-            let message = details.first?["msg"] as? String
+            let detail = json["detail"] as? String
         else { return nil }
-        return message
+        return detail
+    }
+
+    /// A 422 for a note or link, in plain words. FastAPI's body is a list of validation
+    /// errors, {"detail": [{"type": "string_too_long", "ctx": {"max_length": 20000}, …}]},
+    /// written for developers ("String should have at most 20000 characters"). The one a
+    /// person meets is text over the limit, so that gets its own sentence, with the limit
+    /// read from the answer; anything else gets one plain sentence.
+    static func rejectionMessage(in data: Data, kind: String) -> String {
+        let what = kind == "link" ? "link" : "note"
+        let details = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["detail"] as? [[String: Any]]
+        for detail in details ?? [] {
+            guard let type = detail["type"] as? String, type.hasSuffix("too_long") else { continue }
+            let limit = (detail["ctx"] as? [String: Any])?["max_length"] as? Int
+            guard let limit else { return "This \(what) is too long to save." }
+            // English words, so an English thousands separator: "20,000".
+            let number = limit.formatted(.number.locale(Locale(identifier: "en_US")))
+            return "This \(what) is too long to save (over \(number) characters)."
+        }
+        return "The backend couldn't save this \(what). Check it and try again."
     }
 }

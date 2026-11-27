@@ -210,8 +210,8 @@ final class AnswerReveal {
         catchUp()
     }
 
-    /// Let everything out now (a failure: what came stays, as it is). While the capsule
-    /// is closed, this waits for `resume`.
+    /// Let everything out now (a failure: what came stays, as it is, less a marker cut in
+    /// half). While the capsule is closed, this waits for `resume`.
     func flush(drainNow: Bool = false) {
         if isHeld {
             heldFlush = true
@@ -220,6 +220,18 @@ final class AnswerReveal {
         // Also when everything is out but the end was never announced: the close stopped
         // the last characters' fade, so the tick that would have said so never came.
         guard running || revealed < received.count || (inputDone && onDrained != nil) else { return }
+        // A stream that failed can stop in the middle of a marker ("…tablets [c:3"). The
+        // rest of it will never come, so the half marker is dropped, never shown. (A
+        // finished answer's text is the backend's checked text: its markers are whole.)
+        // (Never below what is out already: the pour itself stops short of a half marker.)
+        let end = max(safeEnd(), revealed)
+        #if DEBUG
+        if end < received.count {
+            print("[reveal] flush: dropped a half-arrived marker (\(received.count - end) characters)")
+            fflush(stdout)
+        }
+        #endif
+        received.removeSubrange(end...)
         revealed = received.count
         shownAt = Array(repeating: 0, count: revealed)
         freezeFinishedLines(now: .infinity)
@@ -229,7 +241,25 @@ final class AnswerReveal {
             freezeAll()
             drained(now: drainNow)
         }
+        #if DEBUG
+        // Counts and a yes or no only, never the words.
+        print("[reveal] flush: \(debugCounts), raw marker on screen: \(debugShowsRawMarker ? "YES" : "no")")
+        fflush(stdout)
+        #endif
     }
+
+    #if DEBUG
+    /// The text as drawn, line by line.
+    var debugShownText: String {
+        (frozen + live).map { String($0.text.characters) }.joined(separator: "\n")
+    }
+
+    /// Does any drawn line hold a raw marker, or the start of one ("[", "[c", "[c:3")?
+    var debugShowsRawMarker: Bool {
+        let shown = debugShownText
+        return shown.contains("[c") || shown.hasSuffix("[")
+    }
+    #endif
 
     /// The stream is still open: show what arrived while closed, fully drawn, then let
     /// the tick take over again. It finishes any fade the close cut short, pours what comes

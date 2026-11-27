@@ -391,6 +391,14 @@ enum CapsuleStyle {
     static let secondary = 0.72
     /// Flat fills for controls inside the capsule.
     static let controlFill = 0.14
+    /// The black laid on the glass behind an answer card (see `CapsuleSurface`). Debug
+    /// builds can try another amount with `MD_ANSWER_DIM=0.3`.
+    static let answerDim: Double = {
+        #if DEBUG
+        if let raw = ProcessInfo.processInfo.environment["MD_ANSWER_DIM"], let value = Double(raw) { return value }
+        #endif
+        return 0.35
+    }()
 }
 
 /// The capsule's surface: Apple's clear Liquid Glass, with no tint.
@@ -402,21 +410,39 @@ enum CapsuleStyle {
 ///
 /// The known cost: over a bright white window the clear glass turns light grey, and the
 /// white text on it is hard to read. Apple recommends clear glass only over rich media,
-/// with about 35% dimming over bright content. No dimming is added on purpose: San chose
-/// the plain clear look, and the legibility over white is a recorded known issue (D41).
+/// with about 35% dimming over bright content. The empty capsule, Capture and the drop
+/// target get no dimming on purpose: San chose the plain clear look there, and the
+/// legibility over white is a recorded known issue (D41). Answers are dimmed (below).
 /// With Reduce Transparency on, it is a solid dark shape instead, as before.
+///
+/// Dim behind answers (San's decision, 2026-11-26): while an Ask answer card shows, a
+/// layer of black (`dim`, `CapsuleStyle.answerDim`) sits on the glass, behind the
+/// content. Over a busy or dark window, clear glass let the window's own text show
+/// through about as strongly as the answer, which made the answer hard to read. Empty,
+/// in Capture and as the drop target, the glass stays clear. The layer is inside the
+/// glass's shape, so it follows the capsule as it grows, and it fades in and out with the
+/// card. Like sunglasses over a busy page: the answer stays bright, the page goes quiet.
 struct CapsuleSurface: ViewModifier {
+    /// What the capsule shows: the dimming follows Ask's card.
+    let panel: PanelModel
+    let isDropTarget: Bool
+    /// False while the capsule comes into view: it takes its dimming at once, unseen.
+    var animatesDim = true
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func body(content: Content) -> some View {
         if reduceTransparency || Self.forceSolid {
+            // Solid already: no dimming on top of it.
             content.background {
                 CapsuleShape()
                     .fill(Color(white: 0.11))
                     .overlay { CapsuleShape().strokeBorder(.white.opacity(0.12), lineWidth: 1) }
             }
         } else {
-            content.glassEffect(.clear, in: CapsuleShape())
+            content
+                // Part of the glass's content, so it is drawn on the glass, under the text.
+                .background { AnswerDim(panel: panel, isDropTarget: isDropTarget, animates: animatesDim) }
+                .glassEffect(.clear, in: CapsuleShape())
         }
     }
 
@@ -427,5 +453,36 @@ struct CapsuleSurface: ViewModifier {
         #else
         false
         #endif
+    }
+}
+
+/// The black behind an Ask answer card (see `CapsuleSurface`). Its own view, so that a
+/// new question or a mode switch redraws this layer alone. When the surface itself read
+/// the card's state, every question re-applied the glass, and the question's first frame
+/// came about 7 ms later on average than before this layer (eight typed questions each,
+/// in turns); as its own view, it is level with before.
+private struct AnswerDim: View {
+    let panel: PanelModel
+    let isDropTarget: Bool
+    let animates: Bool
+
+    /// How much black lies on the glass, 0 to 1: dimmed behind an Ask answer card
+    /// (thinking, the answer, its sources, an error), clear otherwise.
+    private var dim: Double {
+        let card = panel.ask.question != nil || panel.ask.errorMessage != nil
+        return !isDropTarget && panel.mode == .ask && card ? CapsuleStyle.answerDim : 0
+    }
+
+    var body: some View {
+        CapsuleShape()
+            .fill(.black.opacity(dim))
+            .animation(animates ? Self.fade : nil, value: dim)
+            .allowsHitTesting(false)
+    }
+
+    /// The dimming fades over 0.3 s, starting a few frames late: the question's own
+    /// frame (Return) already lays out the new card, and the fade need not add to it.
+    private static var fade: Animation {
+        .easeInOut(duration: 0.3 * IslandMotion.timeScale).delay(0.05 * IslandMotion.timeScale)
     }
 }

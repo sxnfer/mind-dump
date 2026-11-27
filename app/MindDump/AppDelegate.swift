@@ -67,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         script = DebugScript(window: window, island: island, pointer: pointer, film: film)
         script?.onMeasure = { [weak self] name in self?.frames?.begin(name) }
         script?.drop = drop
+        script?.panel = panel
         script?.onHotKey = { [weak self] edge in self?.hotKey.handle(edge) }
         DebugRemote.listen { [weak self] command in self?.debug(command) }
         print("[motion] tuning \(IslandMotion.tuning.rawValue)")
