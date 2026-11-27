@@ -16,7 +16,8 @@ final class AskModel {
     }
 
     /// One numbered source under the answer: one item (a note, a link, a file), with
-    /// every passage of it the answer cited, in the order first cited.
+    /// every passage of it the answer cited: in page order when they have pages, else in
+    /// the order first cited.
     struct Source: Identifiable, Equatable {
         let number: Int
         var citations: [APIClient.Citation]
@@ -224,6 +225,12 @@ final class AskModel {
             expanded.remove(source.number)
         } else {
             expanded.insert(source.number)
+            #if DEBUG
+            // Page numbers only, in the order the row lists its passages.
+            let pages = source.shownCitations.map { $0.page.map(String.init) ?? "-" }.joined(separator: ", ")
+            print("[ask] source \(source.number) passages: \(source.citations.count), shown pages \(pages)")
+            fflush(stdout)
+            #endif
         }
     }
 
@@ -402,9 +409,10 @@ final class AskModel {
     }
 
     /// One source per item, in the order their numbers first appear in the text, each
-    /// with its passages in the order first cited (the backend lists citations that way).
+    /// with its passages in page order (or, with no pages, in the order first cited, as
+    /// the backend lists citations).
     /// An item the text never mentions (rare) goes at the end with the next free number.
-    private static func numbered(_ citations: [APIClient.Citation], by number: (Int) -> Int?) -> [Source] {
+    static func numbered(_ citations: [APIClient.Citation], by number: (Int) -> Int?) -> [Source] {
         var seen = Set<Int>()
         var next = (citations.compactMap { $0.markerID.flatMap(number) }.max() ?? 0) + 1
         var row: [Int: Int] = [:]  // item id to its index in `sources`
@@ -418,6 +426,14 @@ final class AskModel {
             let shown = number(id) ?? { defer { next += 1 }; return next }()
             row[citation.itemId] = sources.count
             sources.append(Source(number: shown, citations: [citation]))
+        }
+        // A file's passages read in page order, as in the file: by page, then by place on
+        // the page (chunk ids run in the order of the text). Citation order (p. 1, 1, 4,
+        // 2, 3…) made a long list hard to scan. Passages with no page keep their order.
+        for index in sources.indices where sources[index].citations.contains(where: { $0.page != nil }) {
+            sources[index].citations.sort { a, b in
+                (a.page ?? .max, a.chunkId ?? a.markerID ?? 0) < (b.page ?? .max, b.chunkId ?? b.markerID ?? 0)
+            }
         }
         return sources.sorted { $0.number < $1.number }
     }

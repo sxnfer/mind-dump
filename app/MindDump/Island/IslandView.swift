@@ -161,7 +161,7 @@ struct IslandView: View {
                 .clipShape(CapsuleShape())
                 // On the content itself, not as a sibling: the container draws glass above
                 // anything that is not the glass's own content (the rim included).
-                .modifier(CapsuleSurface())
+                .modifier(CapsuleSurface(panel: panel, isDropTarget: drop != nil, animatesDim: !capsule.arrives))
                 // Coming into view it takes its size at once, while still invisible: only
                 // the fade and the scale below show (see `CapsuleMetrics.arrives`). A nil
                 // `animation(_:body:)` would not do: nil there means "inherit", and the
@@ -563,7 +563,9 @@ private struct ActivityGlyph: View {
         }
         .font(.system(size: 13, weight: .semibold))
         .frame(height: 16)
-        .transition(.scale(scale: 0.6).combined(with: .opacity))
+        // The new glyph grows in; the old one goes at once. Fading it out beside the new
+        // one left a ghost of the check next to the spinner ("Saved" to "Reading page").
+        .transition(.asymmetric(insertion: .scale(scale: 0.6).combined(with: .opacity), removal: .identity))
         .animation(IslandMotion.spring(0.32, 0.7), value: glyph)
     }
 }

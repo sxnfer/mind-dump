@@ -95,7 +95,10 @@ struct AskSection: View {
             } else {
                 Spacer(minLength: 0)
             }
-            if isCard {
+            // Only beside a question: an error alone (a rate limit, no key) would leave
+            // "New ⌘N" on a row by itself. ⌘N still clears the error (`AppDelegate`).
+            // With neither, the row is empty and takes no height.
+            if ask.question != nil {
                 Button(action: ask.newQuestion) {
                     HStack(spacing: 4) {
                         Text("New")
@@ -138,6 +141,8 @@ struct AskSection: View {
                             scrolled(to: frame)
                         }
                 }
+                // The side margins are inside the scroll view (see below).
+                .padding(.horizontal, Self.sideMargin)
             }
             .coordinateSpace(.named(Self.scrollSpace))
             .scrollIndicators(overflows ? .automatic : .never)
@@ -146,6 +151,10 @@ struct AskSection: View {
             // Drawn over the edges, not as a mask: a SwiftUI scroll view on the Mac is an
             // AppKit scroll view inside, and a mask does not reach it.
             .overlay { EdgeFade(scroll: scroll, contentHeight: contentHeight, viewport: viewport, active: overflows) }
+            // The scroll view runs from edge to edge of the card, and its content keeps the
+            // side margins inside it. So the scroll bar sits in the right margin, by the
+            // glass's edge, not on top of the source rows' arrows and chevrons.
+            .padding(.horizontal, -Self.sideMargin)
             .onChange(of: contentHeight) { _, _ in
                 guard scroll.following, overflows, ask.phase != .done else { return }
                 // Keep the newest line in sight. Critically damped, unlike the body's
@@ -169,11 +178,22 @@ struct AskSection: View {
                 proxy.scrollTo(Self.topID, anchor: .top)
             }
             .onChange(of: ask.expanded) { old, new in
-                // A row just opened: scroll only as far as needed to show its passage.
-                // On the next turn of the main queue, once the row has its new height.
+                // A row just opened: scroll only as far as needed to show its passages.
+                // On the next turn of the main queue, once the row has its new height. A
+                // row taller than the view cannot be shown whole: its title goes to the
+                // top, so it reads from its start (scrolling to its end hid the title).
                 guard let opened = new.subtracting(old).first else { return }
                 DispatchQueue.main.async {
-                    autoScroll(proxy, to: SourcesList.rowEndID(opened), anchor: nil, IslandMotion.spring(0.5, 1), holding: 0.8)
+                    let tall = (scroll.rowHeights[opened] ?? 0) > max(room - scrollTop, 80)
+                    #if DEBUG
+                    print("[ask] source \(opened) opened: \(Int(scroll.rowHeights[opened] ?? 0)) points tall, view \(Int(max(room - scrollTop, 80))), scrolls to its \(tall ? "title" : "end")")
+                    fflush(stdout)
+                    #endif
+                    if tall {
+                        autoScroll(proxy, to: SourcesList.rowTopID(opened), anchor: .top, IslandMotion.spring(0.5, 1), holding: 0.8)
+                    } else {
+                        autoScroll(proxy, to: SourcesList.rowEndID(opened), anchor: nil, IslandMotion.spring(0.5, 1), holding: 0.8)
+                    }
                 }
             }
         }
@@ -217,12 +237,18 @@ struct AskSection: View {
                     .transition(.opacity)
                 }
                 if !ask.sources.isEmpty {
-                    SourcesList(ask: ask, island: island)
+                    SourcesList(ask: ask, island: island, scroll: scroll)
                         .padding(.top, Self.partGap)
+                        // The last row's own padding (kept for its hover panel) and the
+                        // room its 18-point line leaves under the words would add to the
+                        // space under it: take them back, so the margin is even (measured:
+                        // 25 points under the last row with the padding alone, 22 at the
+                        // sides).
+                        .padding(.bottom, -(SourceRow.verticalPadding + 3))
                 }
             }
             Color.clear.frame(height: 0)
-                .padding(.top, statusAlone ? Self.statusAloneGap : Self.partGap)
+                .padding(.top, statusAlone || ask.phase == .done ? Self.statusAloneGap : Self.partGap)
                 .id(Self.tailID)
         }
         .padding(.bottom, 2)
@@ -232,11 +258,13 @@ struct AskSection: View {
     /// Only the status line shows (thinking, searching, reading): the card fits it exactly.
     private var statusAlone: Bool { ask.status != nil && !ask.reveal.hasText }
 
-    /// Under a status line alone, the line's ink ends as far from the card's bottom edge
-    /// as the text starts from its sides: this gap, the 2 points under the content and
-    /// the card's bottom padding make the side margin. (Measured on screen: 22 points
-    /// under and 22 at the sides; the line's ink and the glass's edge each take about a
-    /// point, and cancel out.) Between parts the gap stays 14, under an answer as before.
+    /// Under a status line alone, and under a finished answer's last part (its last
+    /// source row, its notice or its last line), the ink ends as far from the card's
+    /// bottom edge as the text starts from its sides: this gap, the 2 points under the
+    /// content and the card's bottom padding make the side margin. (Measured on screen:
+    /// 22 points under and 22 at the sides; the line's ink and the glass's edge each take
+    /// about a point, and cancel out.) While words flow the gap stays 14, so the newest
+    /// line has some room under it as the view follows it.
     private static let statusAloneGap: CGFloat = sideMargin - bottomPadding - 2
 
     // MARK: Scrolling
@@ -403,10 +431,14 @@ struct Notice: View {
 private struct SourcesList: View {
     let ask: AskModel
     let island: IslandModel
+    /// Where each row's height is kept, for the scroll after a row opens.
+    let scroll: AnswerScrollState
 
     /// A zero-height mark at a row's bottom edge: scrolling it into view shows all of
     /// an opened row (a row whose top is already on screen counts as visible).
     static func rowEndID(_ number: Int) -> String { "source-row-end-\(number)" }
+    /// The same at a row's top edge: an opened row taller than the view goes here.
+    static func rowTopID(_ number: Int) -> String { "source-row-top-\(number)" }
 
     var body: some View {
         let animateIn = !ask.sourcesHaveEntered
@@ -421,6 +453,12 @@ private struct SourcesList: View {
                 SourceRow(ask: ask, island: island, source: source, expanded: ask.expanded.contains(source.number))
                     .overlay(alignment: .bottom) {
                         Color.clear.frame(height: 0).id(Self.rowEndID(source.number))
+                    }
+                    .overlay(alignment: .top) {
+                        Color.clear.frame(height: 0).id(Self.rowTopID(source.number))
+                    }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { [scroll, number = source.number] in
+                        scroll.rowHeights[number] = $0
                     }
                     .modifier(Entrance(order: index + 1, animate: animateIn, reduceMotion: island.reduceMotion))
             }
@@ -465,6 +503,9 @@ private struct SourceRow: View {
     let source: AskModel.Source
     let expanded: Bool
     @State private var hovering = false
+
+    /// Space above and below a row's content, inside its hover panel.
+    static let verticalPadding: CGFloat = 6
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -513,10 +554,11 @@ private struct SourceRow: View {
             .frame(minHeight: 18)
             .debugTarget("source-\(source.number)")
             if expanded {
-                // Every passage of this item the answer cited, once each, in the order
-                // first cited. With several, each quote names its own page and shows at
-                // most three lines (ending in "…"), and at most six quotes show: a row
-                // with many passages stays a short list to scan, not a wall of text.
+                // Every passage of this item the answer cited, once each, in page order
+                // (see `AskModel.numbered`). With several, each quote names its own page
+                // and shows at most three lines (ending in "…"), and at most six quotes
+                // show: a row with many passages stays a short list to scan, not a wall
+                // of text.
                 let several = source.citations.count > 1
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(source.shownCitations, id: \.marker) { citation in
@@ -549,7 +591,7 @@ private struct SourceRow: View {
             }
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.vertical, Self.verticalPadding)
         .background {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(.white.opacity(expanded ? 0.06 : hovering ? 0.045 : 0))
@@ -581,6 +623,8 @@ private final class AnswerScrollState {
     @ObservationIgnored var following = true
     /// Until when the view's own follow scroll is still moving.
     @ObservationIgnored var autoScrollUntil: CFTimeInterval = 0
+    /// Each source row's height, by its number.
+    @ObservationIgnored var rowHeights: [Int: CGFloat] = [:]
 }
 
 /// Soft edges where the answer scrolls under them: a faint shade, nothing else. Each edge
@@ -606,7 +650,6 @@ private struct EdgeFade: View {
                 .frame(height: 18)
                 .opacity(bottom)
         }
-        .padding(.horizontal, -22)  // edge to edge across the card
         .allowsHitTesting(false)
     }
 }

@@ -283,7 +283,8 @@ final class FilmRecorder {
 /// Write lines to `<temporary folder>/script.txt`, then:
 ///     notifyutil -p io.github.sxnfer.MindDump.debug.script
 ///
-///     pointer notch | away      move the stand-in pointer
+///     pointer notch | capsule | away
+///                               move the stand-in pointer (capsule: the middle of the glass)
 ///     click                     press and release on the notch (opens, or closes)
 ///     click away                press somewhere else on the screen
 ///     type Buy oat milk         one key event per character
@@ -324,6 +325,10 @@ final class FilmRecorder {
 ///                               a window of ours behind the island, to see the glass over
 ///                               a bright page, a dark one, or a busy picture
 ///     shot                      one still of the screen there, backdrop included
+///     ask Some question         in an open capsule (even one that waits, without the
+///                               keyboard): switch to Ask and send this question, as
+///                               typing it and pressing Return would
+///     selftest                  run the logic checks in `SelfTest` and print each result
 @MainActor
 final class DebugScript {
     private let window: NotchWindow
@@ -337,6 +342,8 @@ final class DebugScript {
     var drop: DropModel?
     /// The global shortcut's press and release, as the system's event would hand them on.
     var onHotKey: ((GlobalHotKey.Edge) -> Void)?
+    /// The capsule's modes, for `ask`.
+    var panel: PanelModel?
 
     init(window: NotchWindow, island: IslandModel, pointer: PointerTracker, film: FilmRecorder) {
         self.window = window
@@ -374,7 +381,12 @@ final class DebugScript {
         switch verb {
         case "pointer":
             let body = window.bodyRect(for: island.metrics)
-            pointer.scriptedPointer = rest == "away" ? awayPoint : NSPoint(x: body.midX, y: body.maxY - 6)
+            let glass = window.capsuleRect(for: island.capsule)
+            switch rest {
+            case "away": pointer.scriptedPointer = awayPoint
+            case "capsule": pointer.scriptedPointer = NSPoint(x: glass.midX, y: glass.midY)
+            default: pointer.scriptedPointer = NSPoint(x: body.midX, y: body.maxY - 6)
+            }
         case "click":
             if rest == "away" {
                 pointer.scriptedPointer = awayPoint
@@ -459,6 +471,19 @@ final class DebugScript {
             print("[script] quit")
             fflush(stdout)
             NSApp.terminate(nil)
+        case "ask":
+            // No keys typed: a capsule that waits (opened by `openwaiting`) can ask too, so
+            // a question never needs the keyboard taken from whoever uses the Mac.
+            guard let panel, island.presentation.isOpen, !rest.isEmpty else {
+                print("[script] ask: not sent (the capsule is closed, or no question)")
+                break
+            }
+            panel.select(.ask)
+            panel.ask.draft = rest
+            panel.ask.submit()
+            print("[script] ask: \(panel.ask.isBusy ? "sent" : "not sent"), \(rest.count) characters")
+        case "selftest":
+            await SelfTest.run()
         case "dragtypes":
             dragTypes()
         case "boxsize":

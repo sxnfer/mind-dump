@@ -152,6 +152,8 @@ final class IslandModel {
     var onTransition: ((String) -> Void)?
 
     private var isHovering = false
+    /// The pointer is over the notch itself (see `hover`).
+    private var isOverNotch = false
     /// Debug only: a script is standing in for the pointer, so ignore the real one.
     var hoverIsScripted = false
     /// First leg of a collapse: the capsule has started to fade out in place, and the
@@ -182,9 +184,12 @@ final class IslandModel {
 
     // MARK: Intent
 
-    /// The pointer entered or left the island's hot zone.
-    func hover(_ inside: Bool, scripted: Bool = false) {
-        guard scripted || !hoverIsScripted, inside != isHovering else { return }
+    /// The pointer entered or left the island's hot zone. `overNotch`: it is where the bare
+    /// notch would peek (the hot zone of an open capsule is larger: it covers the glass).
+    func hover(_ inside: Bool, overNotch: Bool? = nil, scripted: Bool = false) {
+        guard scripted || !hoverIsScripted else { return }
+        isOverNotch = overNotch ?? inside
+        guard inside != isHovering else { return }
         isHovering = inside
         hoverExit?.cancel()
         if inside {
@@ -266,10 +271,12 @@ final class IslandModel {
     }
 
     /// Close with nothing to report: the capsule fades out where it is (and the body
-    /// peeks, if the pointer is still there).
+    /// peeks, if the pointer is on the notch). With the pointer over the capsule, it goes
+    /// straight to the bare notch: the hot zone shrinks to the notch, so a peek there
+    /// would only flash and fold away.
     func close() {
         guard presentation.isOpen else { return }
-        go(isHovering ? .peek : .idle, with: .dismiss, name: "close")
+        go(isHovering && isOverNotch ? .peek : .idle, with: .dismiss, name: "close")
     }
 
     /// Show a status pill. From the open capsule (or a released drop target) this is a

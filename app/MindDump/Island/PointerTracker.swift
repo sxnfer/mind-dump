@@ -66,7 +66,17 @@ final class PointerTracker {
         let inside = hotZone.contains(pointer)
         // Only take clicks while the pointer is on the island.
         if window.ignoresMouseEvents == inside { window.ignoresMouseEvents = !inside }
-        island.hover(inside)
+        island.hover(inside, overNotch: notchZone.contains(pointer))
+    }
+
+    /// Where the pointer makes the bare notch peek: the idle hot zone. While the capsule is
+    /// out the hot zone also covers the capsule, and a close with the pointer there (not
+    /// on the notch) must go straight to the bare notch, not peek for a moment.
+    private var notchZone: HotZone {
+        let body = window.bodyRect(for: island.layout.idle)
+        return HotZone(rects: [
+            NSRect(x: body.minX - 10, y: body.minY - 5, width: body.width + 20, height: body.height + 24)
+        ])
     }
 
     /// Where a press in another app began, to tell a click from a drag on release.
