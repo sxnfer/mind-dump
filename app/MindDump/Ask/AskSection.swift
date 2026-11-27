@@ -145,6 +145,13 @@ struct AskSection: View {
                 .padding(.horizontal, Self.sideMargin)
             }
             .coordinateSpace(.named(Self.scrollSpace))
+            // A web address in the answer or a quoted passage opens like a source's
+            // arrow: in the browser, with the keyboard handed back to the box.
+            .environment(\.openURL, OpenURLAction { url in
+                ask.open(url)
+                return .handled
+            })
+            .tint(AnswerReveal.accent)
             .scrollIndicators(overflows ? .automatic : .never)
             .scrollDisabled(!overflows)
             .frame(height: ask.question == nil ? 0 : viewport, alignment: .top)
@@ -355,13 +362,136 @@ private struct AnswerLine: View, Equatable {
         } else if line.isGap {
             Color.clear.frame(height: 5)
         } else {
-            let text = Text(line.text)
-                .font(.system(size: 13.5))
-                .lineSpacing(Self.lineGap)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if selectable { text.textSelection(.enabled) } else { text }
+            // Finished lines get clickable web addresses; flowing ones stay plain, so no
+            // link search runs on every frame.
+            if selectable {
+                LinkText(Linkify.links(in: line.text))
+                    .font(.system(size: 13.5))
+                    .lineSpacing(Self.lineGap)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            } else {
+                Text(line.text)
+                    .font(.system(size: 13.5))
+                    .lineSpacing(Self.lineGap)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
+    }
+}
+
+/// Web addresses in a text become links (http and https only), underlined. The view's
+/// tint colours them and its `openURL` opens them.
+enum Linkify {
+    private static let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
+    static func links(in string: String) -> AttributedString {
+        links(in: AttributedString(string))
+    }
+
+    /// A quoted passage as running text. A PDF's text breaks at every printed line (a
+    /// big heading can give one word per line), which wasted the few lines a quote
+    /// shows and could push a web address out of sight. Blank lines still part paragraphs.
+    static func flowing(_ quote: String) -> String {
+        quote
+            .components(separatedBy: "\n\n")
+            .map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+
+    static func links(in text: AttributedString) -> AttributedString {
+        let plain = String(text.characters)
+        // Cheap test first: most lines hold no address at all.
+        guard let detector, plain.contains("http") || plain.contains("www.") else { return text }
+        var result = text
+        for match in detector.matches(in: plain, range: NSRange(plain.startIndex..., in: plain)) {
+            guard let url = match.url, ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+                  let range = Range(match.range, in: plain)
+            else { continue }
+            // Both views count Characters, so offsets in one are offsets in the other.
+            let start = result.characters.index(
+                result.startIndex, offsetBy: plain.distance(from: plain.startIndex, to: range.lowerBound))
+            let end = result.characters.index(start, offsetBy: plain.distance(from: range.lowerBound, to: range.upperBound))
+            result[start..<end].link = url
+            result[start..<end].underlineStyle = .single
+        }
+        return result
+    }
+}
+
+/// Text whose links show the pointing hand while the pointer is over them. SwiftUI
+/// gives no hover for part of a text, so the renderer notes where each link run was
+/// drawn and the hover checks the pointer against those places. Text without a link
+/// is drawn as plain `Text`, with no renderer and no hover.
+struct LinkText: View {
+    let text: AttributedString
+    private let hasLink: Bool
+    @State private var spots = LinkSpots()
+    @State private var overLink = false
+
+    init(_ text: AttributedString) {
+        self.text = text
+        hasLink = text.runs[\.link].contains { $0.0 != nil }
+    }
+
+    var body: some View {
+        if hasLink {
+            marked
+                .textRenderer(LinkSpotter(spots: spots))
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let point): overLink = spots.contains(point)
+                    case .ended: overLink = false
+                    }
+                }
+                .pointerStyle(overLink ? .link : nil)
+        } else {
+            Text(text)
+        }
+    }
+
+    /// One `Text` made of the pieces, with each link piece tagged so the renderer knows it.
+    private var marked: Text {
+        var result = Text(verbatim: "")
+        for (link, range) in text.runs[\.link] {
+            let piece = Text(AttributedString(text[range]))
+            result = link == nil ? Text("\(result)\(piece)") : Text("\(result)\(piece.customAttribute(LinkRun()))")
+        }
+        return result
+    }
+}
+
+/// Tags a run of text as a link (see `LinkText`).
+private struct LinkRun: TextAttribute {}
+
+/// Where a text's links were last drawn, in the text's own coordinates. Written while
+/// drawing and read while hovering, so a lock guards it.
+private final class LinkSpots: @unchecked Sendable {
+    private let lock = NSLock()
+    private var rects: [CGRect] = []
+
+    func set(_ new: [CGRect]) { lock.withLock { rects = new } }
+    func contains(_ point: CGPoint) -> Bool {
+        lock.withLock { rects.contains { $0.insetBy(dx: -1, dy: -2).contains(point) } }
+    }
+}
+
+/// Draws the text unchanged, noting the bounds of every run tagged as a link.
+private struct LinkSpotter: TextRenderer {
+    let spots: LinkSpots
+
+    func draw(layout: Text.Layout, in context: inout GraphicsContext) {
+        var found: [CGRect] = []
+        for line in layout {
+            for run in line where run[LinkRun.self] != nil {
+                found.append(run.typographicBounds.rect)
+            }
+            context.draw(line)
+        }
+        spots.set(found)
     }
 }
 
@@ -532,7 +662,7 @@ private struct SourceRow: View {
                         .fixedSize()
                 }
                 Spacer(minLength: 6)
-                if let link = source.link {
+                if source.link != nil {
                     Button { ask.open(source) } label: {
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: 10.5, weight: .semibold))
@@ -542,9 +672,10 @@ private struct SourceRow: View {
                     .buttonStyle(.plain)
                     .focusable(false)
                     .foregroundStyle(.white.opacity(hovering ? 0.75 : 0.45))
+                    .pointerStyle(.link)
                     .debugTarget("open-\(source.number)")
-                    .accessibilityLabel("Open \(link.host() ?? "link")")
-                    .help(link.absoluteString)
+                    .accessibilityLabel(source.openLabel)
+                    .help(source.openHelp)
                 }
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .semibold))
@@ -568,7 +699,7 @@ private struct SourceRow: View {
                                     .font(.system(size: 10.5).monospacedDigit())
                                     .foregroundStyle(.white.opacity(0.36))
                             }
-                            Text(citation.quote.trimmingCharacters(in: .whitespacesAndNewlines))
+                            LinkText(Linkify.links(in: Linkify.flowing(citation.quote)))
                                 .font(.system(size: 12))
                                 .foregroundStyle(.white.opacity(0.6))
                                 .lineSpacing(3)

@@ -8,6 +8,7 @@ import threading
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx2
 import psycopg
@@ -296,3 +297,52 @@ def test_database_refuses_a_file_row_without_its_hash(
 ) -> None:
     with pytest.raises(psycopg.errors.CheckViolation):
         conn.execute("INSERT INTO items (type, title) VALUES ('file', 'no bytes')")
+
+
+# ---------- reading a file back (M6: a cited source opens) ----------
+
+
+def test_get_file_returns_the_uploaded_bytes_for_the_browser_to_show(client: TestClient) -> None:
+    item = upload(client, PDF, "Fig 04 cutting.pdf").json()
+
+    response = client.get(f"/items/{item['id']}/file")
+
+    assert response.status_code == 200, response.text
+    assert response.content == PDF
+    assert response.headers["content-type"] == "application/pdf"
+    disposition = response.headers["content-disposition"]
+    assert disposition.startswith("inline;")  # shown in the browser, not saved
+    assert disposition.endswith("filename*=UTF-8''" + quote(item["filename"]))
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_get_file_keeps_an_images_media_type(client: TestClient) -> None:
+    item = upload(client, PNG, "a.png").json()
+
+    response = client.get(f"/items/{item['id']}/file")
+
+    assert response.content == PNG
+    assert response.headers["content-type"] == "image/png"
+
+
+def test_get_file_of_a_note_is_422(client: TestClient) -> None:
+    note = client.post("/items", json={"type": "note", "body": "Buy oat milk"}).json()
+
+    response = client.get(f"/items/{note['id']}/file")
+
+    assert response.status_code == 422
+    assert "Only files" in response.json()["detail"]
+
+
+def test_get_file_of_a_missing_item_is_404(client: TestClient) -> None:
+    assert client.get("/items/999999/file").status_code == 404
+
+
+def test_get_file_whose_stored_bytes_are_gone_is_404(client: TestClient, storage_dir: Path) -> None:
+    item = upload(client, PDF).json()
+    (storage_dir / "files" / item["sha256"]).unlink()
+
+    response = client.get(f"/items/{item['id']}/file")
+
+    assert response.status_code == 404
+    assert "missing" in response.json()["detail"]
