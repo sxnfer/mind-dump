@@ -155,7 +155,7 @@ final class NotchWindow: NSPanel {
 /// What a closed island accepts as a drop: plain text, links from a browser, and files.
 /// Images that are not files are not listed, so AppKit turns those away before we see
 /// them (most also carry text or a URL; `DropModel` refuses those itself). Which files the
-/// island takes (one PDF, PNG or JPEG) is `DropModel`'s call, so it can say why not.
+/// island takes (one PDF or image) is `DropModel`'s call, so it can say why not.
 private let dropTypes: [NSPasteboard.PasteboardType] = [.string, .URL, .fileURL]
 
 @MainActor

@@ -61,7 +61,7 @@ struct IslandLayout: Equatable {
     /// The drop target is narrower: it holds one short line.
     static let dropWidth: CGFloat = 300
     /// The widest a pill's wing may grow on either side of the notch. Wide enough for a
-    /// file drop's warnings ("Only PDF, PNG and JPEG", "Backend isn't running"); every
+    /// file drop's warnings ("Couldn't read the image", "Backend isn't running"); every
     /// shorter pill is as wide as its own words, so it is not changed by this.
     static let maxWing: CGFloat = 170
 

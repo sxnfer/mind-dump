@@ -20,7 +20,7 @@ struct APIClient: Sendable {
         case rejected(String)       // 422: the API explains what is wrong with the input
         case alreadySaved           // 409: this link, or these exact file bytes, already saved
         case tooLarge               // 413: a file over the backend's 25 MB limit
-        case unsupportedType        // 415: not a PDF, PNG or JPEG, judged by its first bytes
+        case unsupportedType        // 415: not a PDF, PNG, JPEG, GIF or WebP, judged by its first bytes
         case unreadableFile         // the app could not read a file to upload (moved, no access)
         case unexpected(Int)        // any other status code
 
@@ -30,7 +30,7 @@ struct APIClient: Sendable {
             case .rejected(let reason): reason
             case .alreadySaved: "Already saved."
             case .tooLarge: "Files can be at most 25 MB."
-            case .unsupportedType: "Only PDF, PNG and JPEG files can be saved."
+            case .unsupportedType: "Only PDF files and images can be saved."
             case .unreadableFile: "Couldn't read the file."
             case .unexpected(let code): "The backend answered \(code)."
             }
@@ -81,12 +81,20 @@ struct APIClient: Sendable {
         return item
     }
 
+    /// What an upload sends: a file as it is on disk, or bytes the app made from one (an
+    /// image converted or shrunk for Claude, D42).
+    enum UploadBody: Sendable {
+        case file(URL)
+        case data(Data)
+    }
+
     /// POST /items/upload: the file's raw bytes as the body, its name in a header (D34).
     ///
-    /// The body is streamed from disk by URLSession, off the main thread, so a 20 MB file
-    /// is never held in memory whole and the island keeps animating. The backend decides
+    /// A file is streamed from disk by URLSession, off the main thread, so a 20 MB file
+    /// is never held in memory whole and the island keeps animating. Made bytes are at
+    /// most 7.5 MB (`ImagePrep.maxBytes`) and are sent from memory. The backend decides
     /// the type from the first bytes and dedupes by SHA-256 (409 for the same bytes).
-    func uploadFile(_ file: URL, name: String) async throws -> Item {
+    func uploadFile(_ body: UploadBody, name: String) async throws -> Item {
         var request = URLRequest(url: baseURL.appending(path: "items/upload"))
         request.httpMethod = "POST"
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
@@ -94,17 +102,22 @@ struct APIClient: Sendable {
         // Seconds without any progress, not for the whole upload.
         request.timeoutInterval = 30
 
-        // A file dragged in from Finder is readable because the drag granted it (see
-        // `DropModel.payload(from:)`). If the URL is security-scoped as well, open the
-        // scope for exactly as long as the upload reads it.
-        let scoped = file.startAccessingSecurityScopedResource()
-        defer { if scoped { file.stopAccessingSecurityScopedResource() } }
-
         let data: Data
         let code: Int
         do {
-            let (body, response) = try await URLSession.shared.upload(for: request, fromFile: file)
-            data = body
+            let (answer, response): (Data, URLResponse)
+            switch body {
+            case .file(let file):
+                // A file dragged in from Finder is readable because the drag granted it
+                // (see `DropModel.payload(from:)`). If the URL is security-scoped as well,
+                // open the scope for exactly as long as the upload reads it.
+                let scoped = file.startAccessingSecurityScopedResource()
+                defer { if scoped { file.stopAccessingSecurityScopedResource() } }
+                (answer, response) = try await URLSession.shared.upload(for: request, fromFile: file)
+            case .data(let bytes):
+                (answer, response) = try await URLSession.shared.upload(for: request, from: bytes)
+            }
+            data = answer
             code = (response as? HTTPURLResponse)?.statusCode ?? 0
         } catch let error as URLError where error.code == .fileDoesNotExist || error.code == .noPermissionsToReadFile {
             // Not the backend's fault: the file moved, or the sandbox would not let us read it.
@@ -158,7 +171,7 @@ struct APIClient: Sendable {
         case 409:
             throw APIError.alreadySaved
         case 422:
-            throw APIError.rejected(Self.firstValidationMessage(in: data) ?? "The backend rejected this.")
+            throw APIError.rejected(Self.rejectionMessage(in: data, kind: payload["type"] ?? "note"))
         default:
             throw APIError.unexpected(code)
         }
@@ -173,24 +186,32 @@ struct APIClient: Sendable {
         }
     }
 
-    /// An error's `detail` when it is a plain sentence (the upload route's own errors), or
-    /// the first validation message.
+    /// An error's `detail` when it is a plain sentence (the upload route's own errors).
+    /// A list of validation errors is the framework's wording, never shown as it is.
     private static func detailMessage(in data: Data) -> String? {
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let detail = json["detail"] as? String
-        {
-            return detail
-        }
-        return firstValidationMessage(in: data)
-    }
-
-    /// FastAPI's 422 body: {"detail": [{"loc": [...], "msg": "..."}]}
-    private static func firstValidationMessage(in data: Data) -> String? {
         guard
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let details = json["detail"] as? [[String: Any]],
-            let message = details.first?["msg"] as? String
+            let detail = json["detail"] as? String
         else { return nil }
-        return message
+        return detail
+    }
+
+    /// A 422 for a note or link, in plain words. FastAPI's body is a list of validation
+    /// errors, {"detail": [{"type": "string_too_long", "ctx": {"max_length": 20000}, …}]},
+    /// written for developers ("String should have at most 20000 characters"). The one a
+    /// person meets is text over the limit, so that gets its own sentence, with the limit
+    /// read from the answer; anything else gets one plain sentence.
+    static func rejectionMessage(in data: Data, kind: String) -> String {
+        let what = kind == "link" ? "link" : "note"
+        let details = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["detail"] as? [[String: Any]]
+        for detail in details ?? [] {
+            guard let type = detail["type"] as? String, type.hasSuffix("too_long") else { continue }
+            let limit = (detail["ctx"] as? [String: Any])?["max_length"] as? Int
+            guard let limit else { return "This \(what) is too long to save." }
+            // English words, so an English thousands separator: "20,000".
+            let number = limit.formatted(.number.locale(Locale(identifier: "en_US")))
+            return "This \(what) is too long to save (over \(number) characters)."
+        }
+        return "The backend couldn't save this \(what). Check it and try again."
     }
 }

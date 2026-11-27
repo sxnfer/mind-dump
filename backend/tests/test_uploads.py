@@ -21,6 +21,8 @@ from mind_dump.uploads import MAX_UPLOAD_BYTES
 PDF = b"%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n"
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 32
+GIF = b"GIF89a\x10\x00\x10\x00" + b"\x00" * 32
+WEBP = b"RIFF\x24\x00\x00\x00WEBPVP8L" + b"\x00" * 32
 MB = 1024 * 1024
 
 
@@ -61,6 +63,15 @@ def test_upload_pdf_returns_201_with_location_and_file_fields(
 def test_png_and_jpeg_are_accepted(client: TestClient) -> None:
     assert upload(client, PNG, "a.png").json()["media_type"] == "image/png"
     assert upload(client, JPEG, "b.jpg").json()["media_type"] == "image/jpeg"
+
+
+def test_gif_and_webp_are_accepted_as_themselves(client: TestClient) -> None:
+    gif = upload(client, GIF, "c.gif").json()
+    webp = upload(client, WEBP, "d.webp").json()
+
+    assert (gif["media_type"], gif["filename"]) == ("image/gif", "c.gif")
+    assert (webp["media_type"], webp["filename"]) == ("image/webp", "d.webp")
+    assert webp["sha256"] == hashlib.sha256(WEBP).hexdigest()  # stored byte for byte
 
 
 def test_list_and_get_show_file_items(client: TestClient) -> None:
@@ -206,8 +217,31 @@ def test_text_claiming_to_be_a_pdf_is_415(client: TestClient, storage_dir: Path)
     )
 
     assert response.status_code == 415
-    assert "PDF, PNG and JPEG" in response.json()["detail"]
+    assert "PDF, PNG, JPEG, GIF and WebP" in response.json()["detail"]
     assert stored_files(storage_dir) == []
+
+
+@pytest.mark.parametrize(
+    ("data", "name"),
+    [
+        (b"just some text, not a picture", "funny.gif"),
+        (b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 16, "song.webp"),
+        (b"II*\x00" + b"\x00" * 32, "scan.tiff"),  # the Mac converts TIFF before upload
+    ],
+)
+def test_a_gif_or_webp_name_or_type_header_does_not_make_one(
+    client: TestClient, storage_dir: Path, data: bytes, name: str
+) -> None:
+    response = upload(client, data, name, **{"Content-Type": "image/gif"})
+
+    assert response.status_code == 415
+    assert stored_files(storage_dir) == []
+
+
+def test_a_png_named_gif_is_saved_as_the_png_it_is(client: TestClient) -> None:
+    item = upload(client, PNG, "really-a-png.gif", **{"Content-Type": "image/gif"}).json()
+
+    assert item["media_type"] == "image/png"
 
 
 def test_real_pdf_sent_as_octet_stream_is_accepted(client: TestClient) -> None:

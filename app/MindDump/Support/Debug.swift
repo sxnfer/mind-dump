@@ -283,7 +283,8 @@ final class FilmRecorder {
 /// Write lines to `<temporary folder>/script.txt`, then:
 ///     notifyutil -p io.github.sxnfer.MindDump.debug.script
 ///
-///     pointer notch | away      move the stand-in pointer
+///     pointer notch | capsule | away
+///                               move the stand-in pointer (capsule: the middle of the glass)
 ///     click                     press and release on the notch (opens, or closes)
 ///     click away                press somewhere else on the screen
 ///     type Buy oat milk         one key event per character
@@ -300,6 +301,9 @@ final class FilmRecorder {
 ///     dragfile <path>           a drag carrying this one file arrives (several paths,
 ///                               separated by " | ", make a drag of several files)
 ///     dropfile [<path>]         release a file drag; no path: the one over it
+///     prepfile <path>           make an image's upload twice, as a drop would (D42),
+///                               upload nothing, and write both to tmp/prep/ (<name>.1,
+///                               <name>.2) so their bytes can be compared
 ///     pill saved | reading | ready | failed
 ///                               show a test pill (as the Darwin notifications do)
 ///     openwaiting               open the capsule without the keyboard (as a failed drop)
@@ -324,6 +328,10 @@ final class FilmRecorder {
 ///                               a window of ours behind the island, to see the glass over
 ///                               a bright page, a dark one, or a busy picture
 ///     shot                      one still of the screen there, backdrop included
+///     ask Some question         in an open capsule (even one that waits, without the
+///                               keyboard): switch to Ask and send this question, as
+///                               typing it and pressing Return would
+///     selftest                  run the logic checks in `SelfTest` and print each result
 @MainActor
 final class DebugScript {
     private let window: NotchWindow
@@ -337,6 +345,8 @@ final class DebugScript {
     var drop: DropModel?
     /// The global shortcut's press and release, as the system's event would hand them on.
     var onHotKey: ((GlobalHotKey.Edge) -> Void)?
+    /// The capsule's modes, for `ask`.
+    var panel: PanelModel?
 
     init(window: NotchWindow, island: IslandModel, pointer: PointerTracker, film: FilmRecorder) {
         self.window = window
@@ -374,7 +384,12 @@ final class DebugScript {
         switch verb {
         case "pointer":
             let body = window.bodyRect(for: island.metrics)
-            pointer.scriptedPointer = rest == "away" ? awayPoint : NSPoint(x: body.midX, y: body.maxY - 6)
+            let glass = window.capsuleRect(for: island.capsule)
+            switch rest {
+            case "away": pointer.scriptedPointer = awayPoint
+            case "capsule": pointer.scriptedPointer = NSPoint(x: glass.midX, y: glass.midY)
+            default: pointer.scriptedPointer = NSPoint(x: body.midX, y: body.maxY - 6)
+            }
         case "click":
             if rest == "away" {
                 pointer.scriptedPointer = awayPoint
@@ -441,6 +456,8 @@ final class DebugScript {
             let described = Self.describe(payload ?? drop?.current)
             let taken = drop?.dropped(payload) ?? false
             print("[script] dropfile: \(taken ? "saving " + described : "refused, " + described)")
+        case "prepfile":
+            await prepFile(rest)
         case "keystate":
             print("[script] keystate: \(KeyState.describe(window: window, island: island))")
         case "resignkey":
@@ -459,6 +476,19 @@ final class DebugScript {
             print("[script] quit")
             fflush(stdout)
             NSApp.terminate(nil)
+        case "ask":
+            // No keys typed: a capsule that waits (opened by `openwaiting`) can ask too, so
+            // a question never needs the keyboard taken from whoever uses the Mac.
+            guard let panel, island.presentation.isOpen, !rest.isEmpty else {
+                print("[script] ask: not sent (the capsule is closed, or no question)")
+                break
+            }
+            panel.select(.ask)
+            panel.ask.draft = rest
+            panel.ask.submit()
+            print("[script] ask: \(panel.ask.isBusy ? "sent" : "not sent"), \(rest.count) characters")
+        case "selftest":
+            await SelfTest.run()
         case "dragtypes":
             dragTypes()
         case "boxsize":
@@ -472,6 +502,31 @@ final class DebugScript {
     }
 
     /// The same metadata-only check a real file drag makes (`DropModel.payload(files:)`).
+    /// Twice, so determinism is proved on the same bytes the app would upload.
+    private func prepFile(_ path: String) async {
+        let url = URL(fileURLWithPath: path)
+        let folder = FileManager.default.temporaryDirectory.appending(path: "prep", directoryHint: .isDirectory)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var outputs: [Data] = []
+        for run in 1...2 {
+            do {
+                let prepared = try await Task.detached { try ImagePrep.prepare(url, name: url.lastPathComponent) }.value
+                let data: Data
+                switch prepared.body {
+                case .data(let bytes): data = bytes
+                case .file(let file): data = (try? Data(contentsOf: file)) ?? Data()
+                }
+                try? data.write(to: folder.appending(path: "\(url.lastPathComponent).\(run)"))
+                outputs.append(data)
+                print("[script] prepfile \(run): \(prepared.name), \(prepared.change.map(String.init(describing:)) ?? "sent unchanged, \(data.count) bytes")")
+            } catch {
+                print("[script] prepfile \(run): failed, \(error)")
+                return
+            }
+        }
+        print("[script] prepfile: the two runs are \(outputs[0] == outputs[1] ? "the same bytes" : "DIFFERENT")")
+    }
+
     private static func filePayload(_ paths: String) -> DropModel.Payload? {
         let urls = paths.components(separatedBy: " | ").map { URL(fileURLWithPath: $0) }
         return DropModel.payload(files: urls)
@@ -484,7 +539,7 @@ final class DebugScript {
         case nil: "nothing"
         case .text(let text, .link): "link, \(text.count) characters"
         case .text(let text, _): "note, \(text.count) characters"
-        case .file(let file): "file \(file.name), \(file.size.map(String.init) ?? "unknown") bytes"
+        case .file(let file): "\(file.isImage ? "image" : "file") \(file.name), \(file.size.map(String.init) ?? "unknown") bytes"
         case .refused(let refusal, let name): "\"\(refusal.message)\" \(name ?? "")"
         }
     }

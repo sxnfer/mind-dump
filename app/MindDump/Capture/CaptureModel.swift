@@ -24,13 +24,20 @@ final class CaptureModel {
 
     private let api: APIClient
     private let island: IslandModel
-    private var tracking: Task<Void, Never>?
+    private let status: StatusTracker
     private var clearing: Task<Void, Never>?
     private var pendingRetry: (text: String, error: String)?
 
     init(api: APIClient, island: IslandModel) {
         self.api = api
         self.island = island
+        status = StatusTracker(
+            fetch: { id in try await api.item(id) },
+            show: { activity in island.show(activity) },
+            dismiss: { id in island.dismissActivity(id: id) },
+            // An earlier item's warning never pulls the open capsule or a drop target away.
+            isBusy: { island.presentation.isOpen || island.presentation.isDropTarget }
+        )
     }
 
     /// What Return would save right now.
@@ -105,8 +112,9 @@ final class CaptureModel {
 
     /// A dropped file: uploaded, then the same "Saved", live status and "Already saved"
     /// as a note. The worker reads a PDF's text or describes an image ("Processing").
-    func storeFile(_ url: URL, name: String) async throws {
-        try await announce(isLink: false) { [api] in try await api.uploadFile(url, name: name) }
+    /// An image may arrive here as bytes the app made from the file (`ImagePrep`, D42).
+    func storeFile(_ body: APIClient.UploadBody, name: String) async throws {
+        try await announce(isLink: false) { [api] in try await api.uploadFile(body, name: name) }
     }
 
     /// The part every save shares: run it, then tell the island.
@@ -125,7 +133,7 @@ final class CaptureModel {
         }
         let id = "item-\(item.id)"
         island.show(IslandActivity(id: id, glyph: .check, text: "Saved"))
-        follow(item, activityID: id, isLink: isLink)
+        follow(item, isLink: isLink)
     }
 
     /// A drop that could not be saved: the next open puts its words in the box with the
@@ -134,49 +142,10 @@ final class CaptureModel {
         pendingRetry = (text, error)
     }
 
-    /// Live status (D11, polling): ask the backend how the worker is getting on, and keep
-    /// the pill honest. A note is usually done before the first ask; a web page takes a
-    /// second or two; a failure is shown, not swallowed.
-    private func follow(_ saved: APIClient.Item, activityID: String, isLink: Bool) {
-        tracking?.cancel()
-        guard !saved.isSettled else { return }
-        tracking = Task { [api, island] in
-            // Let "Saved" be read before anything replaces it.
-            try? await Task.sleep(for: IslandMotion.seconds(0.9))
-            var showedProgress = false
-            for _ in 0..<120 {
-                guard !Task.isCancelled else { return }
-                guard let item = try? await api.item(saved.id) else { return }
-                switch item.status {
-                case .ready, .saved:
-                    if showedProgress {
-                        island.show(IslandActivity(id: activityID, glyph: .check, text: "Ready"))
-                    }
-                    return
-                case .error:
-                    island.show(
-                        IslandActivity(
-                            id: activityID, glyph: .warning,
-                            text: isLink ? "Couldn't read page" : "Couldn't process", hold: 3
-                        )
-                    )
-                    return
-                case .queued, .processing, .retrying:
-                    if !showedProgress {
-                        showedProgress = true
-                        island.show(
-                            IslandActivity(
-                                id: activityID, glyph: .spinner,
-                                text: item.status == .retrying ? "Retrying" : (isLink ? "Reading page" : "Processing"),
-                                hold: nil
-                            )
-                        )
-                    }
-                }
-                try? await Task.sleep(for: .milliseconds(500))
-            }
-            island.dismissActivity(id: activityID)
-        }
+    /// Live status (D11, polling) for this item, and the ones saved before it that are
+    /// still being worked on (see `StatusTracker`).
+    private func follow(_ saved: APIClient.Item, isLink: Bool) {
+        status.follow(saved, isLink: isLink)
     }
 
     /// A single http(s) address and nothing else. "see https://x.com later" is a note.

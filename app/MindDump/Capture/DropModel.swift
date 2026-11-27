@@ -28,9 +28,13 @@ final class DropModel {
     /// and size. Its bytes are read only after a release, and only by the upload.
     struct DroppedFile: Equatable {
         let url: URL
+        /// As the user knows it (`IMG_0042.HEIC`); the drop target shows this name.
         let name: String
         /// nil when the size could not be read; the backend's 413 is then the check.
         let size: Int?
+        /// An image, which may be converted or shrunk before upload (`ImagePrep`, D42).
+        /// Otherwise a PDF, sent as it is.
+        var isImage = false
     }
 
     enum Refusal: Equatable {
@@ -39,7 +43,9 @@ final class DropModel {
         /// Shown in the drop target. Plain words, short enough for one line.
         var message: String {
             switch self {
-            case .unsupportedType: "Only PDF, PNG and JPEG files"
+            // Any image the Mac can open is taken (D42), so the words name the kind, not a
+            // list of formats that would not fit on one line.
+            case .unsupportedType: "Only PDFs and images"
             case .tooLarge: "Too big: 25 MB at most"
             case .empty: "This file is empty"
             case .severalFiles: "One file at a time"
@@ -48,7 +54,8 @@ final class DropModel {
     }
 
     /// The backend's own limit (`MAX_UPLOAD_BYTES` in `uploads.py`), checked here first so
-    /// a file that is too big is refused before a byte is sent.
+    /// a PDF that is too big is refused before a byte is sent. An image is never refused
+    /// for its size: what is sent is at most 7.5 MB (`ImagePrep.maxBytes`).
     static let maxFileBytes = 25 * 1024 * 1024
 
     private let panel: PanelModel
@@ -78,9 +85,10 @@ final class DropModel {
         return .text(trimmed, CaptureModel.webURL(in: trimmed).map(CaptureModel.Kind.link) ?? .note)
     }
 
-    /// The files a drag carries. One supported file is a payload; anything else is a
-    /// refusal with its reason. Only metadata is read here (type, size, is it a folder),
-    /// never the contents: this runs while the drag is still moving.
+    /// The files a drag carries. One supported file (a PDF, or any image the Mac can open)
+    /// is a payload; anything else is a refusal with its reason. Only metadata is read
+    /// here (type, size, is it a folder), never the contents: this runs while the drag is
+    /// still moving.
     static func payload(files urls: [URL]) -> Payload? {
         guard let url = urls.first else { return nil }
         guard urls.count == 1 else { return .refused(.severalFiles, name: nil) }
@@ -92,13 +100,13 @@ final class DropModel {
         // The system's idea of its type, or failing that its extension. The backend
         // decides for certain from the first bytes (a 415 if the name lied).
         let type = values?.contentType ?? UTType(filenameExtension: url.pathExtension)
-        guard let type, [UTType.pdf, .png, .jpeg].contains(where: { type.conforms(to: $0) }) else {
-            return .refused(.unsupportedType, name: name)
-        }
+        guard let type else { return .refused(.unsupportedType, name: name) }
+        let isImage = !type.conforms(to: .pdf) && ImagePrep.canOpen(type)
+        guard isImage || type.conforms(to: .pdf) else { return .refused(.unsupportedType, name: name) }
         let size = values?.fileSize
-        if let size, size > maxFileBytes { return .refused(.tooLarge, name: name) }
+        if !isImage, let size, size > maxFileBytes { return .refused(.tooLarge, name: name) }
         if size == 0 { return .refused(.empty, name: name) }
-        return .file(DroppedFile(url: url, name: name, size: size))
+        return .file(DroppedFile(url: url, name: name, size: size, isImage: isImage))
     }
 
     // MARK: The flow
@@ -146,8 +154,8 @@ final class DropModel {
 
     private func save(_ payload: Payload) async {
         // Usually the backend answers in a few milliseconds and "Saved" is the next thing
-        // shown. If it is slow (a big file), say so instead of holding a target that looks
-        // unanswered.
+        // shown. If it is slow (a big file, or a photo being converted), say so instead of
+        // holding a target that looks unanswered.
         let slow = Task { [island] in
             try? await Task.sleep(for: IslandMotion.seconds(0.3))
             if !Task.isCancelled { island.dropTargetSaving() }
@@ -169,7 +177,8 @@ final class DropModel {
             }
         case .file(let file):
             do {
-                try await capture.storeFile(file.url, name: file.name)
+                let upload = try await Self.prepare(file)
+                try await capture.storeFile(upload.body, name: upload.name)
             } catch {
                 // Nothing was saved, and the file is still where it was, so nothing is lost.
                 // The capsule stays shut (a text box cannot hold a file); a warning pill
@@ -184,12 +193,34 @@ final class DropModel {
         }
     }
 
+    /// A PDF goes as it is. An image is made to fit Claude first (D42), away from the main
+    /// thread: converting a 12-megapixel HEIC takes a moment, and the island must keep
+    /// animating meanwhile.
+    private static func prepare(_ file: DroppedFile) async throws -> ImagePrep.Prepared {
+        guard file.isImage else { return ImagePrep.Prepared(body: .file(file.url), name: file.name, change: nil) }
+        let (url, name) = (file.url, file.name)
+        #if DEBUG
+        let started = ContinuousClock.now
+        #endif
+        let prepared = try await Task.detached(priority: .userInitiated) {
+            try ImagePrep.prepare(url, name: name)
+        }.value
+        #if DEBUG
+        let took = (ContinuousClock.now - started).formatted(.units(allowed: [.milliseconds]))
+        print("[image] \(prepared.change.map(String.init(describing:)) ?? "sent unchanged") in \(took)")
+        fflush(stdout)
+        #endif
+        return prepared
+    }
+
     /// A failed upload in a few words (a pill holds about 22 characters).
     private static func pillText(for error: Error) -> String {
-        switch error as? APIClient.APIError {
+        // The file could not be decoded (damaged, or not really an image): nothing was sent.
+        if error as? ImagePrep.Failure == .unreadable { return "Couldn't read the image" }
+        return switch error as? APIClient.APIError {
         case .unreachable: "Backend isn't running"
         case .tooLarge: "Too big: 25 MB at most"
-        case .unsupportedType: "Only PDF, PNG and JPEG"
+        case .unsupportedType: "Only PDFs and images"
         case .rejected: "This file is empty"  // the upload's only 422
         case .unreadableFile: "Couldn't read the file"
         default: "Couldn't save the file"
