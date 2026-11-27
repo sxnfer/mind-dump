@@ -301,6 +301,9 @@ final class FilmRecorder {
 ///     dragfile <path>           a drag carrying this one file arrives (several paths,
 ///                               separated by " | ", make a drag of several files)
 ///     dropfile [<path>]         release a file drag; no path: the one over it
+///     prepfile <path>           make an image's upload twice, as a drop would (D42),
+///                               upload nothing, and write both to tmp/prep/ (<name>.1,
+///                               <name>.2) so their bytes can be compared
 ///     pill saved | reading | ready | failed
 ///                               show a test pill (as the Darwin notifications do)
 ///     openwaiting               open the capsule without the keyboard (as a failed drop)
@@ -453,6 +456,8 @@ final class DebugScript {
             let described = Self.describe(payload ?? drop?.current)
             let taken = drop?.dropped(payload) ?? false
             print("[script] dropfile: \(taken ? "saving " + described : "refused, " + described)")
+        case "prepfile":
+            await prepFile(rest)
         case "keystate":
             print("[script] keystate: \(KeyState.describe(window: window, island: island))")
         case "resignkey":
@@ -497,6 +502,31 @@ final class DebugScript {
     }
 
     /// The same metadata-only check a real file drag makes (`DropModel.payload(files:)`).
+    /// Twice, so determinism is proved on the same bytes the app would upload.
+    private func prepFile(_ path: String) async {
+        let url = URL(fileURLWithPath: path)
+        let folder = FileManager.default.temporaryDirectory.appending(path: "prep", directoryHint: .isDirectory)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var outputs: [Data] = []
+        for run in 1...2 {
+            do {
+                let prepared = try await Task.detached { try ImagePrep.prepare(url, name: url.lastPathComponent) }.value
+                let data: Data
+                switch prepared.body {
+                case .data(let bytes): data = bytes
+                case .file(let file): data = (try? Data(contentsOf: file)) ?? Data()
+                }
+                try? data.write(to: folder.appending(path: "\(url.lastPathComponent).\(run)"))
+                outputs.append(data)
+                print("[script] prepfile \(run): \(prepared.name), \(prepared.change.map(String.init(describing:)) ?? "sent unchanged, \(data.count) bytes")")
+            } catch {
+                print("[script] prepfile \(run): failed, \(error)")
+                return
+            }
+        }
+        print("[script] prepfile: the two runs are \(outputs[0] == outputs[1] ? "the same bytes" : "DIFFERENT")")
+    }
+
     private static func filePayload(_ paths: String) -> DropModel.Payload? {
         let urls = paths.components(separatedBy: " | ").map { URL(fileURLWithPath: $0) }
         return DropModel.payload(files: urls)
@@ -509,7 +539,7 @@ final class DebugScript {
         case nil: "nothing"
         case .text(let text, .link): "link, \(text.count) characters"
         case .text(let text, _): "note, \(text.count) characters"
-        case .file(let file): "file \(file.name), \(file.size.map(String.init) ?? "unknown") bytes"
+        case .file(let file): "\(file.isImage ? "image" : "file") \(file.name), \(file.size.map(String.init) ?? "unknown") bytes"
         case .refused(let refusal, let name): "\"\(refusal.message)\" \(name ?? "")"
         }
     }

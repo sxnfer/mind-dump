@@ -4,6 +4,7 @@ import pytest
 from pdfs import make_pdf
 
 from mind_dump.chunking import chunk_pages, chunk_text
+from mind_dump.describe import FakeDescriber
 from mind_dump.errors import PermanentError
 from mind_dump.filetext import PAGE_BREAK, extract_file, extract_pdf, join_pages
 
@@ -47,6 +48,23 @@ def test_no_nul_characters_reach_the_database() -> None:
 def test_an_image_without_a_describer_names_the_key() -> None:
     with pytest.raises(PermanentError, match="ANTHROPIC_API_KEY"):
         extract_file(b"\x89PNG\r\n\x1a\n", "image/png", None)
+
+
+@pytest.mark.parametrize(
+    ("data", "media_type"),
+    [
+        (b"GIF89a\x10\x00\x10\x00" + b"\x00" * 8, "image/gif"),
+        (b"RIFF\x10\x00\x00\x00WEBPVP8L\x05\x00\x00\x00\x2f\x0f\xc0\x03\x00", "image/webp"),
+    ],
+)
+def test_gif_and_webp_are_described_like_png_and_jpeg(data: bytes, media_type: str) -> None:
+    describer = FakeDescriber("A small square.")
+
+    result = extract_file(data, media_type, describer)
+
+    assert result.text == "A small square."
+    assert result.pages is None
+    assert describer.calls == 1
 
 
 def test_chunks_never_cross_a_page_and_keep_their_numbers() -> None:

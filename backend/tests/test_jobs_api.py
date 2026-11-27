@@ -288,4 +288,4 @@ def test_deleting_an_item_removes_its_jobs_and_chunks(
 
 
 def test_the_api_version_is_bumped(client: TestClient) -> None:
-    assert client.get("/openapi.json").json()["info"]["version"] == "0.8.0"
+    assert client.get("/openapi.json").json()["info"]["version"] == "0.9.0"

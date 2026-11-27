@@ -14,6 +14,10 @@ SHA = "a" * 64
         (b"\x89PNG\r\n\x1a\n\x00\x00", "image/png"),
         (b"\xff\xd8\xff\xe0\x00\x10JFIF", "image/jpeg"),
         (b"\xff\xd8\xff\xe1\x00\x10Exif", "image/jpeg"),
+        (b"GIF87a\x10\x00\x10\x00", "image/gif"),
+        (b"GIF89a\x10\x00\x10\x00", "image/gif"),
+        (b"RIFF\x24\x55\x00\x00WEBPVP8L", "image/webp"),
+        (b"RIFF\x00\x00\x00\x00WEBPVP8 ", "image/webp"),  # the length is not checked
     ],
 )
 def test_known_formats_are_recognised_by_their_first_bytes(
@@ -28,7 +32,12 @@ def test_known_formats_are_recognised_by_their_first_bytes(
         b"",
         b"hello",
         b"MZ\x90\x00",  # a Windows .exe, whatever it is named
-        b"GIF89a",  # a real image, but not an allowed one
+        b"GIF88a",  # not a GIF version that exists
+        b"GIF8",  # half a GIF signature
+        b"RIFF\x24\x55\x00\x00WAVEfmt ",  # a RIFF file, but a sound, not a WebP
+        b"RIFF\x24\x55\x00\x00WEB",  # cut short before "WEBP" ends
+        b"II*\x00",  # a TIFF: the Mac app converts it to JPEG first (D42)
+        b"\x00\x00\x00\x18ftypheic",  # a HEIC: the same
         b"%PDF",  # too short to be sure
         b"\x89PNG",  # half a PNG signature
         b" %PDF-1.4",  # the signature must be at the very start

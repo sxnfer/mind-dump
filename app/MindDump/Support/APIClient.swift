@@ -20,7 +20,7 @@ struct APIClient: Sendable {
         case rejected(String)       // 422: the API explains what is wrong with the input
         case alreadySaved           // 409: this link, or these exact file bytes, already saved
         case tooLarge               // 413: a file over the backend's 25 MB limit
-        case unsupportedType        // 415: not a PDF, PNG or JPEG, judged by its first bytes
+        case unsupportedType        // 415: not a PDF, PNG, JPEG, GIF or WebP, judged by its first bytes
         case unreadableFile         // the app could not read a file to upload (moved, no access)
         case unexpected(Int)        // any other status code
 
@@ -30,7 +30,7 @@ struct APIClient: Sendable {
             case .rejected(let reason): reason
             case .alreadySaved: "Already saved."
             case .tooLarge: "Files can be at most 25 MB."
-            case .unsupportedType: "Only PDF, PNG and JPEG files can be saved."
+            case .unsupportedType: "Only PDF files and images can be saved."
             case .unreadableFile: "Couldn't read the file."
             case .unexpected(let code): "The backend answered \(code)."
             }
@@ -72,12 +72,20 @@ struct APIClient: Sendable {
         return item
     }
 
+    /// What an upload sends: a file as it is on disk, or bytes the app made from one (an
+    /// image converted or shrunk for Claude, D42).
+    enum UploadBody: Sendable {
+        case file(URL)
+        case data(Data)
+    }
+
     /// POST /items/upload: the file's raw bytes as the body, its name in a header (D34).
     ///
-    /// The body is streamed from disk by URLSession, off the main thread, so a 20 MB file
-    /// is never held in memory whole and the island keeps animating. The backend decides
+    /// A file is streamed from disk by URLSession, off the main thread, so a 20 MB file
+    /// is never held in memory whole and the island keeps animating. Made bytes are at
+    /// most 7.5 MB (`ImagePrep.maxBytes`) and are sent from memory. The backend decides
     /// the type from the first bytes and dedupes by SHA-256 (409 for the same bytes).
-    func uploadFile(_ file: URL, name: String) async throws -> Item {
+    func uploadFile(_ body: UploadBody, name: String) async throws -> Item {
         var request = URLRequest(url: baseURL.appending(path: "items/upload"))
         request.httpMethod = "POST"
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
@@ -85,17 +93,22 @@ struct APIClient: Sendable {
         // Seconds without any progress, not for the whole upload.
         request.timeoutInterval = 30
 
-        // A file dragged in from Finder is readable because the drag granted it (see
-        // `DropModel.payload(from:)`). If the URL is security-scoped as well, open the
-        // scope for exactly as long as the upload reads it.
-        let scoped = file.startAccessingSecurityScopedResource()
-        defer { if scoped { file.stopAccessingSecurityScopedResource() } }
-
         let data: Data
         let code: Int
         do {
-            let (body, response) = try await URLSession.shared.upload(for: request, fromFile: file)
-            data = body
+            let (answer, response): (Data, URLResponse)
+            switch body {
+            case .file(let file):
+                // A file dragged in from Finder is readable because the drag granted it
+                // (see `DropModel.payload(from:)`). If the URL is security-scoped as well,
+                // open the scope for exactly as long as the upload reads it.
+                let scoped = file.startAccessingSecurityScopedResource()
+                defer { if scoped { file.stopAccessingSecurityScopedResource() } }
+                (answer, response) = try await URLSession.shared.upload(for: request, fromFile: file)
+            case .data(let bytes):
+                (answer, response) = try await URLSession.shared.upload(for: request, from: bytes)
+            }
+            data = answer
             code = (response as? HTTPURLResponse)?.statusCode ?? 0
         } catch let error as URLError where error.code == .fileDoesNotExist || error.code == .noPermissionsToReadFile {
             // Not the backend's fault: the file moved, or the sandbox would not let us read it.

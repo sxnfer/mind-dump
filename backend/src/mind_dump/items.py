@@ -199,7 +199,7 @@ def _save_file(
     "/upload",
     status_code=status.HTTP_201_CREATED,
     response_model=Item,
-    summary="Upload a PDF, PNG or JPEG as the raw request body",
+    summary="Upload a PDF or an image (PNG, JPEG, GIF, WebP) as the raw request body",
     description=(
         "Send the file's bytes as the body (`curl --data-binary @report.pdf`) and its name "
         'in `Content-Disposition: attachment; filename="report.pdf"`. The type is decided '
@@ -208,7 +208,7 @@ def _save_file(
     responses={
         409: {"description": "These exact bytes are already saved; Location points to it"},
         413: {"description": f"Larger than {MAX_UPLOAD_BYTES} bytes"},
-        415: {"description": "Not a PDF, PNG or JPEG (judged by the file's first bytes)"},
+        415: {"description": "Not a PDF, PNG, JPEG, GIF or WebP (judged by the first bytes)"},
         422: {"description": "The body is empty"},
     },
 )
@@ -220,7 +220,7 @@ async def upload_file(request: Request, storage: StorageDep, response: Response)
     if media_type is None:
         raise HTTPException(
             status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Only PDF, PNG and JPEG files can be uploaded: "
+            detail="Only PDF, PNG, JPEG, GIF and WebP files can be uploaded: "
             + ", ".join(ALLOWED_MEDIA_TYPES),
         )
     filename = safe_filename(request.headers.get("content-disposition"))
