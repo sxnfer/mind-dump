@@ -53,6 +53,15 @@ struct APIClient: Sendable {
 
     var healthURL: URL { baseURL.appending(path: "health") }
 
+    /// A file item's stored bytes (`GET /items/{id}/file`), which the browser shows in
+    /// place: a PDF opens at `page` when one is given (`#page=N`), an image as itself.
+    func fileURL(itemID: Int, page: Int? = nil) -> URL {
+        let url = baseURL.appending(path: "items/\(itemID)/file")
+        guard let page, var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        parts.fragment = "page=\(page)"
+        return parts.url ?? url
+    }
+
     func saveLink(_ url: URL) async throws -> Item {
         try await createItem(["type": "link", "url": url.absoluteString])
     }

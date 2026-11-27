@@ -65,9 +65,27 @@ final class AskModel {
             return words.joined(separator: " ") + (words.count == 8 ? "…" : "")
         }
 
+        /// Where the row's open arrow goes: a link's web page, or a file itself (a PDF at
+        /// its first cited page) as the backend serves it. A note has nothing to open:
+        /// its whole text is the passage.
         var link: URL? {
-            guard citation.type == "link" else { return nil }
-            return citation.url.flatMap(URL.init(string:))
+            switch citation.type {
+            case "link": citation.url.flatMap(URL.init(string:))
+            case "file": APIClient.local.fileURL(itemID: citation.itemId, page: citations.compactMap(\.page).min())
+            default: nil
+            }
+        }
+
+        /// What the open arrow says to VoiceOver and in its tooltip.
+        var openLabel: String {
+            switch citation.type {
+            case "file": "Open \(title)"
+            default: "Open \(link?.host() ?? "link")"
+            }
+        }
+
+        var openHelp: String {
+            citation.type == "link" ? (link?.absoluteString ?? "") : "Open in your browser"
         }
 
         var glyph: String {
@@ -229,6 +247,12 @@ final class AskModel {
 
     func open(_ source: Source) {
         guard let url = source.link else { return }
+        open(url)
+    }
+
+    /// Opens a web address from the answer or a quoted passage (or a source's arrow) in
+    /// the default browser, and hands the keyboard back to the box.
+    func open(_ url: URL) {
         focusRequests += 1
         NSWorkspace.shared.open(url)
     }

@@ -1,6 +1,6 @@
 """Save, list, get and delete items (M1), read a link's page history (P1, D32),
 upload files (P2, D34), follow each item's processing (P3, D6), read a file's
-extracted text (M3, D7b), and set an item's tags (M4).
+extracted text (M3, D7b) or its stored bytes (M6), and set an item's tags (M4).
 
 Plain SQL with server-side parameters. Queries are string literals, never f-strings,
 so no value can ever become part of the SQL text (ruff rule S608 enforces this).
@@ -9,6 +9,7 @@ so no value can ever become part of the SQL text (ruff rule S608 enforces this).
 import hashlib
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated
+from urllib.parse import quote
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -426,6 +427,49 @@ def get_file_text(item_id: int, conn: Conn) -> FileText:
         kind="pages" if pages is not None else "description",
         pages=pages,
         created_at=row["created_at"],
+    )
+
+
+@router.get(
+    "/{item_id}/file",
+    summary="A file item's stored bytes, to open it: a PDF in the browser, an image",
+    response_class=Response,
+    responses={
+        200: {"description": "The file's bytes, with its media type", "content": {}},
+        404: {"description": "No such item, or its stored file is missing"},
+        422: {"description": "The item is not a file"},
+    },
+)
+def get_file(item_id: int, conn: Conn, storage: StorageDep) -> Response:
+    """The bytes as uploaded, with `inline` so a browser shows them instead of saving
+    them. The app opens a cited PDF here (with `#page=N`), so a source can be read in
+    full. The bytes never change (the key is their SHA-256, D34), so they may be cached."""
+    item = conn.execute(
+        "SELECT type, sha256, media_type, filename FROM items WHERE id = %s", (item_id,)
+    ).fetchone()
+    if item is None:
+        raise _not_found(item_id)
+    if item["type"] != "file":
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Only files have stored bytes. A link's page is at its url; a note's "
+            "text is its body.",
+        )
+    try:
+        data = storage.get(file_key(item["sha256"]))
+    except FileNotFoundError:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail=f"Item {item_id}'s stored file is missing"
+        ) from None
+    name = item["filename"] or f"item-{item_id}"
+    return Response(
+        content=data,
+        media_type=item["media_type"],
+        headers={
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(name)}",
+            "Cache-Control": "private, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

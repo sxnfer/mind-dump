@@ -45,6 +45,7 @@ curl -si --data-binary @file.pdf -H 'Content-Disposition: attachment; filename="
 curl -s localhost:8000/items/1                 # status: queued, processing, ready or error
 curl -s localhost:8000/items/1/text            # the file's text, with its pages
 curl -s localhost:8000/items/1/chunks          # passages (with chunk_id, as in search hits and citations), page numbers, and whether each has a vector
+open http://localhost:8000/items/1/file        # the file itself, shown in the browser (the app opens a cited PDF here, at its page)
 ```
 
 ### Search
